@@ -7,12 +7,30 @@ __license__ = 'GPL-3'
 
 from mysql import connector as Mysql
 from xlsxwriter import Workbook
-from sqlparse import parse
-from sqlparse.tokens import Keyword, DML
 from datetime import datetime
+from re import sub, search
+from csv import writer
 from argparse import ArgumentParser, FileType
 from os import path
 from sys import exit as sysexit
+
+class StrDecoder:
+	'Methods to decode strings'
+
+	def decode_quotes(self, ins):
+		'Decode string'
+		inside = None
+		ms = ''
+		while ins != '':
+			char = ins[0]
+			ins = ins[1:]
+			if char in self.quotes:
+				if char == inside:
+					return ms, ins
+				inside = char
+			else:
+				ms += char
+		return ms, ins
 
 class Excel(Workbook):
 	'Write to Excel File'
@@ -35,10 +53,6 @@ class Excel(Workbook):
 			else:
 				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt])
 		self.__row_cnt__ += 1
-
-	def close(self):
-		'Close Excel file'
-		self.workbook.close()
 
 class SQLClient:
 	'Client for a running SQL Server'
@@ -63,42 +77,112 @@ class SQLClient:
 class SQLParser:
 	'Parse without a running SQL server'
 
-	def __init__(self, dumpfiles):
+	def __init__(self, dumpfiles, quotes=('"', "'"), brackets=('(', ')')):
 		'Open SQL Dump'
+		self.quotes = quotes
+		self.brackets = brackets
 		self.dumpfiles = dumpfiles
 
 	def fetchall(self):
 		'Line by line'
 		for dumpfile in self.dumpfiles:
 			for line in dumpfile:
-				try:
-					for token in parse(line)[0]:
-						yield token
-				except IndexError:
+				if search(' *--|^$', line) == None:
+					yield line.rstrip('\n')
+
+	def norm_str(self, ins):
+		'Normalize a string'
+		if isinstance(ins, str):
+			return sub('\W+', '', ins)
+		else:
+			return ins
+
+	def norm_iter(self, it):
+		'Normalize elements of an iterable an return a list'
+		return [ self.norm_str(e) for e in it ]
+
+	def cut_line(self, pos):
+		'Cut line, check for end of line and append next if necessary'
+		if pos == len(self.line) -1:
+			self.line = next(self.fetchline)
+		else:
+			self.line = self.line[pos:]
+
+	def decode_value(self):
+		'Find a given command'
+		m_value = search('[ ("]|$', self.line.upper())
+		value = self.norm_str(self.line[:m_value.start()])
+		self.cut_line(m_value.end())
+		return value
+
+	def decode_list(self):
+		'Decode a list / columns'
+		inside = None
+		bcount = 1
+		ms = ''
+		while True:
+			if self.line == '':
+				self.line += next(self.fetchline)
+			char = self.line[0]
+			self.line = self.line[1:]
+			if char == self.brackets[0]:
+				continue
+			if char == inside:
+				if char == self.quotes:
+					inside = None
+				else:
+					inside = char
+				ms += char
+			elif char == self.brackets[0]:
+				bcount += 1
+				if bcount < 1:
 					continue
+				else:
+					ms += char
+			elif char == self.brackets[1]:
+				bcount -= 1
+				if bcount < 1:
+					break
+				else:
+					ms += char
+			else:
+				ms += char
+		return self.norm_iter(ms.split(','))
 
-	def search_insert(self):
-		pos = 'outside'
-		for token in self.fetchall():
-			if token.ttype == DML and token.value.upper() == 'INSERT':
-				pos = 'INSERT'
-			if pos == 'INSERT' and token.ttype == Keyword and token.value.upper() == 'INTO':
-				pos = 'INTO'
-			if pos == 'INTO' and token.ttype == None:
-				pos = 'table'
-				table = token.value.split('(')
-				tablename = table[0]
-				colnames = table[1].split(')')[0].split(',')
-				print('table', tablename, colnames)
-			if pos == 'table' and token.ttype == Keyword and token.value.upper() == 'VALUES':
-				pos = 'VALUES'
-			if pos == 'VALUES' and token.ttype == None:
-				print(token.value)		
+	def find_cmd(self, cmd):
+		'Find a given command'
+		m_cmd = search(f'^{cmd} | {cmd} | {cmd}$|^{cmd}$', self.line.upper())
+		if m_cmd == None:
+			return False
+		self.cut_line(m_cmd.end())
+		return True
 
-	def normalize(self, element):
-		pass			
+	def check_seperator(self):
+		'Comma or semicolon?'
+		m_comma = search(' *,', self.line)
+		if m_comma != None:
+			self.cut_line(m_comma.end())
+			return ','
+		m_semicolon = search(' *;', self.line)
+		if m_semicolon != None:
+			self.cut_line(m_semicolon.end())
+			return ';'
+		return None
 
-
+	def decode_insert(self):
+		'Decode SQL INSERT'
+		self.fetchline = self.fetchall()
+		for self.line in self.fetchline:
+			if self.find_cmd('INSERT') and self.find_cmd('INTO'):
+				yield {'tablename': self.decode_value(), 'colnames': self.decode_list()}
+				if self.find_cmd('VALUES'):
+					while True:
+						yield self.decode_list()
+						seperator = self.check_seperator()
+						if seperator == ';':
+							break
+						if seperator == None:
+							raise RuntimeError
 
 if __name__ == '__main__':	# start here if called as application
 	argparser = ArgumentParser(description='Decode SQL dump files')
@@ -107,7 +191,5 @@ if __name__ == '__main__':	# start here if called as application
 	)
 	args = argparser.parse_args()
 	sqlparser = SQLParser(args.dumpfile)
-	sqlparser.search_insert()
-
-
-
+	for line in sqlparser.decode_insert():
+		print(line)
