@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-10-27'
+__version__ = '0.1_2021-11-15_alpha'
 __license__ = 'GPL-3'
 
 from mysql import connector as Mysql
@@ -11,8 +11,10 @@ from datetime import datetime
 from re import sub, search
 from csv import writer
 from argparse import ArgumentParser, FileType
-from os import path
+from os import chdir, mkdir, getcwd
+from logging import basicConfig, DEBUG, info, warning, error
 from sys import exit as sysexit
+from sys import stdout
 
 class StrDecoder:
 	'Methods to decode strings'
@@ -35,8 +37,9 @@ class StrDecoder:
 class Excel(Workbook):
 	'Write to Excel File'
 
-	def add_table(self, sheetname, headline):
-		'Add a SQL Table to the Excel File'
+	def __init__(self, outfile, dialect='excel', delimiter='\t'):
+		'Generate Excel file and writer'
+		self.workbook = Workbook(outfile)
 		self.worksheet = self.workbook.add_worksheet()
 		self.bold = self.workbook.add_format({'bold': True})
 		for col in range(len(headline)):
@@ -54,25 +57,42 @@ class Excel(Workbook):
 				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt])
 		self.__row_cnt__ += 1
 
-class SQLClient:
-	'Client for a running SQL Server'
+class CSV:
+	'Write to CSV files'
 
-	def __init__(self, host='localhost', user='root', password='dummy', database='test', directory=''):
-		'Generate client to a given database'
-		db = Mysql.connect(host=host, user=user, password=password, database=database)
-		self.cursor = db.cursor()
-		self.directory = directory
+	def __init__(self, outfile, dialect='excel', delimiter='\t'):
+		'Generate CSV file and writer'
+		self.writer = writer(
+			outfile,
+			dialect=dialect,
+			delimiter=delimiter
+		)
 
-	def fetchall(self):
-		cursor.execute('SHOW tables;')
-		for table in cursor.fetchall():
-			cursor.execute(f'SELECT * FROM {table[0]};')
-			rows = cursor.fetchall()
-			if len(rows) > 0:
-				xlsx = Excel(f'{table[0]}.xlsx', cursor.column_names)
-				for row in rows:
-					xlsx.append(row)
-				xlsx.close()
+	def append(self, row):
+		'Append one row to Excel worksheet'
+
+
+		
+		if len(self.stats.data) > 0:
+			if not self.noheadline:
+				self.csvwriter.writerow(self.stats.data[0].keys())
+			if self.reverse:
+				for line in reversed(self.stats.data):
+					self.__writerow__(line)
+			else:
+				for line in self.stats.data:
+					self.__writerow__(line)
+		else:
+			self.csvwriter.writerow(['No data'])
+
+	def __writerow__(self, line):
+		'Write one row to CSV file'
+		if not self.unixtime:
+			line = self.chng_humantime(line)
+		if not self.intbytes:
+			line = self.chng_humanbytes(line)
+		line = self.add_geostring(line)
+		self.csvwriter.writerow(line.values())
 
 class SQLParser:
 	'Parse without a running SQL server'
@@ -184,12 +204,73 @@ class SQLParser:
 						if seperator == None:
 							raise RuntimeError
 
+class SQLClient:
+	'Client for a running SQL Server'
+
+	def __init__(self, host='localhost', user='root', password='dummy', database='test'):
+		'Generate client to a given database'
+		db = Mysql.connect(host=host, user=user, password=password, database=database)
+		self.cursor = db.cursor()
+
+	def fetchall(self):
+		cursor.execute('SHOW tables;')
+		for table in cursor.fetchall():
+			cursor.execute(f'SELECT * FROM {table[0]};')
+			rows = cursor.fetchall()
+			yield {'tablename': table[0], 'colnames': cursor.column_names}
+			for row in rows:
+				yield row
+
+class Outdir:
+	'Directory to write files'
+
+	def __init__(self, outdir=None):
+		'Prepare to write results and logfile'
+		if outdir != None:
+			try:
+				mkdir(outdir)
+			except FileExistsError:
+				pass
+			chdir(outdir)
+		basicConfig(
+			filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'),
+			format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+			datefmt='%Y-%m-%d %H:%M:%S',
+			encoding = 'utf-8',
+			level = DEBUG
+		)
+		info('Starting work, writing to ' + getcwd())
+
 if __name__ == '__main__':	# start here if called as application
 	argparser = ArgumentParser(description='Decode SQL dump files')
+	argparser.add_argument('-c', '--csv', action='store_true',
+		help='Generate CSV files, not Excel'
+	)
+	argparser.add_argument('-d', '--database', type=str,
+		help='Name of database to connect', metavar='STRING'
+	)
+	argparser.add_argument('-o', '--outdir', type=str,
+		help='Directory to write generated files', metavar='DIRECTORY'
+	)
+	argparser.add_argument('-p', '--password', type=str,
+		help='Username to connect to a SQL server', metavar='STRING'
+	)
+	argparser.add_argument('-s', '--host', type=str,
+		help='Hostname to connect to a SQL server', metavar='STRING'
+	)
+	argparser.add_argument('-u', '--user', type=str,
+		help='Username to connect to a SQL server', metavar='STRING'
+	)
 	argparser.add_argument('dumpfile', nargs='*', type=FileType('rt'),
-		help='File to read,', metavar='FILE'
+		help='File(s) to read,', metavar='FILE'
 	)
 	args = argparser.parse_args()
 	sqlparser = SQLParser(args.dumpfile)
-	for line in sqlparser.decode_insert():
+	Outdir(args.outdir)
+
+	#csvwriter = writer(stdout)
+	for line in sqlparser.decode_insert():	# DEBUG
 		print(line)
+	#	csvwriter.writerow(line)
+	c = CSV(stdout)
+	sysexit(0)
