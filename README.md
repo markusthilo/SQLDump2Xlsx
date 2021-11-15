@@ -37,7 +37,9 @@ Username to connect to a SQL server (default: root)
 ### Using git and pip
 
 $ git clone https://github.com/markusthilo/SQLDump2Xlsx.git
+
 $ cd SQLDump2Xlsx
+
 $ pip install -r requirements.txt
 
 ## Warning
