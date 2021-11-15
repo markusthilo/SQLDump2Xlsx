@@ -2,51 +2,33 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-11-15_alpha'
+__version__ = '0.1_2021-11-15'
 __license__ = 'GPL-3'
+__email__ = 'markus.thilo@gmail.com'
+__status__ = 'Testing'
+__description__ = 'Genrate Excel files from a SQL table without relations'
 
 from mysql import connector as Mysql
 from xlsxwriter import Workbook
 from datetime import datetime
 from re import sub, search
-from csv import writer
+from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
 from os import chdir, mkdir, getcwd
 from logging import basicConfig, DEBUG, info, warning, error
 from sys import exit as sysexit
-from sys import stdout
 
-class StrDecoder:
-	'Methods to decode strings'
-
-	def decode_quotes(self, ins):
-		'Decode string'
-		inside = None
-		ms = ''
-		while ins != '':
-			char = ins[0]
-			ins = ins[1:]
-			if char in self.quotes:
-				if char == inside:
-					return ms, ins
-				inside = char
-			else:
-				ms += char
-		return ms, ins
-
-class Excel(Workbook):
+class Excel:
 	'Write to Excel File'
 
-	def __init__(self, outfile, dialect='excel', delimiter='\t'):
+	def __init__(self, table):
 		'Generate Excel file and writer'
-		self.workbook = Workbook(outfile)
-		self.worksheet = self.workbook.add_worksheet()
+		self.workbook = Workbook(table['tablename'] + '.xlsx')
+		self.worksheet = self.workbook.add_worksheet(table['tablename'])
 		self.bold = self.workbook.add_format({'bold': True})
-		for col in range(len(headline)):
-			self.worksheet.write(0, col, headline[col], self.bold)
+		for col in range(len(table['colnames'])):
+			self.worksheet.write(0, col, table['colnames'][col], self.bold)
 		self.__row_cnt__ = 1
-		self.datetime = self.workbook.add_format()
-		self.datetime.set_num_format('yyyy-mm-dd hh:mm')
 
 	def append(self, row):
 		'Append one row to Excel worksheet'
@@ -57,58 +39,40 @@ class Excel(Workbook):
 				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt])
 		self.__row_cnt__ += 1
 
-class CSV:
+	def close(self):
+		'Close file = write Excel file'
+		self.workbook.close()
+
+class Csv:
 	'Write to CSV files'
 
-	def __init__(self, outfile, dialect='excel', delimiter='\t'):
+	def __init__(self, table):
 		'Generate CSV file and writer'
-		self.writer = writer(
-			outfile,
-			dialect=dialect,
-			delimiter=delimiter
-		)
+		self.csvfile = open(table['tablename'] + 'sql', 'wt')
+		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
 
 	def append(self, row):
-		'Append one row to Excel worksheet'
+		'Append one row to CSV file'
+		self.writer.writerow(row)
 
-
-		
-		if len(self.stats.data) > 0:
-			if not self.noheadline:
-				self.csvwriter.writerow(self.stats.data[0].keys())
-			if self.reverse:
-				for line in reversed(self.stats.data):
-					self.__writerow__(line)
-			else:
-				for line in self.stats.data:
-					self.__writerow__(line)
-		else:
-			self.csvwriter.writerow(['No data'])
-
-	def __writerow__(self, line):
-		'Write one row to CSV file'
-		if not self.unixtime:
-			line = self.chng_humantime(line)
-		if not self.intbytes:
-			line = self.chng_humanbytes(line)
-		line = self.add_geostring(line)
-		self.csvwriter.writerow(line.values())
+	def close(self):
+		'Close file'
+		self.csvfile.close()
 
 class SQLParser:
 	'Parse without a running SQL server'
 
-	def __init__(self, dumpfiles, quotes=('"', "'"), brackets=('(', ')')):
+	def __init__(self, dumpfile, quotes=('"', "'"), brackets=('(', ')')):
 		'Open SQL Dump'
 		self.quotes = quotes
 		self.brackets = brackets
-		self.dumpfiles = dumpfiles
+		self.dumpfile = dumpfile
 
-	def fetchall(self):
+	def readlines(self):
 		'Line by line'
-		for dumpfile in self.dumpfiles:
-			for line in dumpfile:
-				if search(' *--|^$', line) == None:
-					yield line.rstrip('\n')
+		for line in self.dumpfile:
+			if search(' *--|^$', line) == None:
+				yield line.rstrip('\n')
 
 	def norm_str(self, ins):
 		'Normalize a string'
@@ -189,11 +153,12 @@ class SQLParser:
 			return ';'
 		return None
 
-	def decode_insert(self):
+	def fetchall(self):
 		'Decode SQL INSERT'
-		self.fetchline = self.fetchall()
+		self.fetchline = self.readlines()
 		for self.line in self.fetchline:
 			if self.find_cmd('INSERT') and self.find_cmd('INTO'):
+				info('Found INSERT')
 				yield {'tablename': self.decode_value(), 'colnames': self.decode_list()}
 				if self.find_cmd('VALUES'):
 					while True:
@@ -202,12 +167,13 @@ class SQLParser:
 						if seperator == ';':
 							break
 						if seperator == None:
-							raise RuntimeError
+							warning('Missing seperator - some rows might get ignored')
+							break
 
 class SQLClient:
 	'Client for a running SQL Server'
 
-	def __init__(self, host='localhost', user='root', password='dummy', database='test'):
+	def __init__(self, host='localhost', user='root', password='root', database='test'):
 		'Generate client to a given database'
 		db = Mysql.connect(host=host, user=user, password=password, database=database)
 		self.cursor = db.cursor()
@@ -221,11 +187,11 @@ class SQLClient:
 			for row in rows:
 				yield row
 
-class Outdir:
-	'Directory to write files'
+class Worker:
+	'Main loop to work table by table'
 
-	def __init__(self, outdir=None):
-		'Prepare to write results and logfile'
+	def __init__(self, decoder, Writer, outdir=None):
+		'Prepare directory to write results and logfile'
 		if outdir != None:
 			try:
 				mkdir(outdir)
@@ -234,43 +200,57 @@ class Outdir:
 			chdir(outdir)
 		basicConfig(
 			filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'),
-			format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-			datefmt='%Y-%m-%d %H:%M:%S',
+			format = '%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+			datefmt = '%Y-%m-%d %H:%M:%S',
 			encoding = 'utf-8',
 			level = DEBUG
 		)
-		info('Starting work, writing to ' + getcwd())
+		info('Starting work, writing into directory ' + getcwd())
+		info('Input method is ' + str(decoder))
+		for row in decoder.fetchall():
+			if isinstance(row, dict):
+				try:
+					writetable.close()
+				except NameError:
+					pass
+				info('Processing table ' + row['tablename'])
+				writetable = Writer(row)
+			else:
+				writetable.append(row)
+		writetable.close()
+		info('All done!')
 
 if __name__ == '__main__':	# start here if called as application
-	argparser = ArgumentParser(description='Decode SQL dump files')
+	argparser = ArgumentParser(description=__description__)
 	argparser.add_argument('-c', '--csv', action='store_true',
 		help='Generate CSV files, not Excel'
 	)
-	argparser.add_argument('-d', '--database', type=str,
-		help='Name of database to connect', metavar='STRING'
+	argparser.add_argument('-d', '--database', type=str, default='test',
+		help='Name of database to connect (default: test)', metavar='STRING'
 	)
 	argparser.add_argument('-o', '--outdir', type=str,
-		help='Directory to write generated files', metavar='DIRECTORY'
+		help='Directory to write generated files (default: current)', metavar='DIRECTORY'
 	)
-	argparser.add_argument('-p', '--password', type=str,
-		help='Username to connect to a SQL server', metavar='STRING'
+	argparser.add_argument('-p', '--password', type=str, default='root',
+		help='Username to connect to a SQL server (default: root)', metavar='STRING'
 	)
-	argparser.add_argument('-s', '--host', type=str,
-		help='Hostname to connect to a SQL server', metavar='STRING'
+	argparser.add_argument('-s', '--host', type=str, default='localhost',
+		help='Hostname to connect to a SQL server (default: localhost)', metavar='STRING'
 	)
-	argparser.add_argument('-u', '--user', type=str,
-		help='Username to connect to a SQL server', metavar='STRING'
+	argparser.add_argument('-u', '--user', type=str, default='root',
+		help='Username to connect to a SQL server (default: root)', metavar='STRING'
 	)
-	argparser.add_argument('dumpfile', nargs='*', type=FileType('rt'),
-		help='File(s) to read,', metavar='FILE'
+	argparser.add_argument('dumpfile', nargs='?', type=FileType('rt'),
+		help='SQL dump file to read (if none: try to connect  a server)', metavar='FILE'
 	)
 	args = argparser.parse_args()
-	sqlparser = SQLParser(args.dumpfile)
-	Outdir(args.outdir)
-
-	#csvwriter = writer(stdout)
-	for line in sqlparser.decode_insert():	# DEBUG
-		print(line)
-	#	csvwriter.writerow(line)
-	c = CSV(stdout)
+	if args.dumpfile == None:
+		decoder = SQLClient(host=args.host, user=args.user, password=args.password, database=args.database)
+	else:
+		decoder = SQLParser(args.dumpfile)
+	if args.csv:
+		writer = Csv
+	else:
+		writer = Excel
+	worker = Worker(decoder, writer, args.outdir)
 	sysexit(0)
