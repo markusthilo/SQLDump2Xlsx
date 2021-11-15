@@ -6,7 +6,7 @@ __version__ = '0.1_2021-11-15'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
-__description__ = 'Genrate Excel files from a SQL table without relations'
+__description__ = 'Generate Excel files from a SQL table without relations'
 
 from mysql import connector as Mysql
 from xlsxwriter import Workbook

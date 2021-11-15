@@ -1,6 +1,6 @@
 # SQLDump2Xlsx
 
-Genrate Excel files from a SQL table without relations
+Generate Excel files from a SQL table without relations
 
 ## Usage of the command line version
 
