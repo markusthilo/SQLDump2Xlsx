@@ -4,7 +4,11 @@ Genrate Excel files from a SQL table without relations
 
 ## Usage of the command line version
 
-sqldump2xlsx.py [-h] [-c] [-d STRING] [-o DIRECTORY] [-p STRING] [-s STRING] [-u STRING] [FILE]
+$ python3 sqldump2xlsx.py [-h] [-c] [-d STRING] [-o DIRECTORY] [-p STRING] [-s STRING] [-u STRING] [FILE]
+
+or
+
+$ ./sqldump2xlsx.sh [-h] [-c] [-d STRING] [-o DIRECTORY] [-p STRING] [-s STRING] [-u STRING] [FILE]
 
 ### Positional arguments
 
@@ -30,10 +34,12 @@ Username to connect to a SQL server (default: root)
 
 ## Installation
 
-### Using git
+### Using git and pip
 
 $ git clone https://github.com/markusthilo/SQLDump2Xlsx.git
-
-### Resolving dependencies
-
+$ cd SQLDump2Xlsx
 $ pip install -r requirements.txt
+
+## Warning
+
+This is in testing / alpha state. Accuracy is not guaranteed.
