@@ -14,7 +14,7 @@ from datetime import datetime
 from re import sub, search
 from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
-from os import chdir, mkdir, getcwd
+from os import chdir, mkdir, getcwd, path, listdir
 from warnings import warn
 from sys import exit as sysexit
 from sys import stdout, stderr
@@ -24,8 +24,19 @@ class Excel:
 
 	def __init__(self, table):
 		'Generate Excel file and writer'
-		self.workbook = Workbook(table['tablename'] + '.xlsx')
-		self.worksheet = self.workbook.add_worksheet(table['tablename'])
+		self.tablename = table['tablename']
+		fname_no_ext = self.tablename
+		fcnt = 1
+		while path.exists(fname_no_ext + '.xlsx'):
+			fcnt += 1
+			fname_no_ext += f'_SAME_TABLE_{fcnt:04d}'
+		self.workbook = Workbook(fname_no_ext + '.xlsx',
+			{
+				'use_zip64': True,
+				'read_only_recommended': True
+			}
+		)
+		self.worksheet = self.workbook.add_worksheet(table['tablename'][:31])
 		self.bold = self.workbook.add_format({'bold': True})
 		for col in range(len(table['colnames'])):
 			self.worksheet.write(0, col, table['colnames'][col], self.bold)
@@ -49,7 +60,12 @@ class Csv:
 
 	def __init__(self, table):
 		'Generate CSV file and writer'
-		self.csvfile = open(table['tablename'] + 'sql', 'wt')
+		self.tablename = table['tablename']
+		filename = table['tablename'] + 'csv'
+		if path.exists(filename):
+			self.csvfile = open(filename, 'a')
+		else:
+			self.csvfile = open(filename, 'w')
 		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
 
 	def append(self, row):
@@ -68,6 +84,7 @@ class SQLParser:
 		self.quotes = quotes
 		self.brackets = brackets
 		self.dumpfile = dumpfile
+		self.name = sub('\.[^.]*$', '', dumpfile.name)
 
 	def readlines(self):
 		'Line by line'
@@ -183,6 +200,7 @@ class SQLClient:
 		'Generate client to a given database'
 		db = Mysql.connect(host=host, user=user, password=password, database=database)
 		self.cursor = db.cursor()
+		self.name = database
 
 	def fetchall(self, logger):
 		cursor.execute('SHOW tables;')
@@ -201,7 +219,7 @@ class SQLClient:
 class Logger:
 	'Simple logging as the standard library is for different needs'
 
-	def __init__(self, handler=None):
+	def __init__(self, handler=[stderr.write]):
 		'Create logger and logfile'
 		self.filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt')
 		self.logfile = open(self.filename, 'a')
@@ -232,15 +250,17 @@ class Logger:
 class Worker:
 	'Main loop to work table by table'
 
-	def __init__(self, decoder, Writer, outdir=None, handler= None):
+	def __init__(self, decoder, Writer, outdir=None, handler=None):
 		'Parse'
-		if outdir != None:
-			try:
-				mkdir(outdir)
-			except FileExistsError:
-				pass
-			chdir(outdir)
-		logger = Logger(handler)
+		if outdir == None:
+			outdir = decoder.name
+		try:
+			mkdir(outdir)
+		except FileExistsError:
+			if listdir(outdir):
+				raise RuntimeError('Destination directory needs to be emtpy')
+		chdir(outdir)
+				logger = Logger(handler)
 		logger.put('Starting work, writing into directory ' + getcwd())
 		logger.put('Input method is ' + str(decoder))
 		for row in decoder.fetchall(logger):
@@ -283,7 +303,12 @@ if __name__ == '__main__':	# start here if called as application
 	)
 	args = argparser.parse_args()
 	if args.dumpfile == None:
-		decoder = SQLClient(host=args.host, user=args.user, password=args.password, database=args.database)
+		decoder = SQLClient(
+			host=args.host,
+			user=args.user,
+			password=args.password,
+			database=args.database
+		)
 	else:
 		decoder = SQLParser(args.dumpfile)
 	if args.csv:
