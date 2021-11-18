@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-11-15'
+__version__ = '0.1_2021-11-18'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -15,8 +15,9 @@ from re import sub, search
 from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
 from os import chdir, mkdir, getcwd
-from logging import basicConfig, DEBUG, info, warning, error
+from warnings import warn
 from sys import exit as sysexit
+from sys import stdout, stderr
 
 class Excel:
 	'Write to Excel File'
@@ -153,13 +154,14 @@ class SQLParser:
 			return ';'
 		return None
 
-	def fetchall(self):
+	def fetchall(self, logger):
 		'Decode SQL INSERT'
 		self.fetchline = self.readlines()
 		for self.line in self.fetchline:
 			if self.find_cmd('INSERT') and self.find_cmd('INTO'):
-				info('Found INSERT')
-				yield {'tablename': self.decode_value(), 'colnames': self.decode_list()}
+				tablename = self.decode_value()
+				logger.put('Found INSERT INTO ' + tablename)
+				yield {'tablename': tablename, 'colnames': self.decode_list()}
 				if self.find_cmd('VALUES'):
 					while True:
 						yield self.decode_list()
@@ -167,8 +169,12 @@ class SQLParser:
 						if seperator == ';':
 							break
 						if seperator == None:
-							warning('Missing seperator - some rows might get ignored')
+							logger.put('WARNING: Missing seperator - some rows might beeing ignored')
 							break
+
+	def close(self):
+		'Close input SQL dump file'
+		self.dumpfile.close()
 
 class SQLClient:
 	'Client for a running SQL Server'
@@ -178,47 +184,79 @@ class SQLClient:
 		db = Mysql.connect(host=host, user=user, password=password, database=database)
 		self.cursor = db.cursor()
 
-	def fetchall(self):
+	def fetchall(self, logger):
 		cursor.execute('SHOW tables;')
 		for table in cursor.fetchall():
+			logger.put('Executing SELECT * FROM ' + table[0])
 			cursor.execute(f'SELECT * FROM {table[0]};')
 			rows = cursor.fetchall()
 			yield {'tablename': table[0], 'colnames': cursor.column_names}
 			for row in rows:
 				yield row
 
+	def close(self):
+		'Dummy'
+		pass
+
+class Logger:
+	'Simple logging as the standard library is for different needs'
+
+	def __init__(self, handler=None):
+		'Create logger and logfile'
+		self.filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt')
+		self.logfile = open(self.filename, 'a')
+		self.handler = handler
+		stderr.write = self.error
+		self.buffer = ''
+
+	def put(self, msg):
+		'Put a message to log and handler if given'
+		if self.handler != None:
+			self.handler(msg)
+		print(datetime.now().strftime('%Y-%m-%d %H%M%S.%f ')
+			+ msg.replace('\n', ' '),
+			file=self.logfile)
+
+	def error(self, from_stderr):
+		'Handle error from stderr'
+		if from_stderr == '\n':
+			self.put(self.buffer)
+			self.buffer = ''
+		else:
+			self.buffer += from_stderr
+
+	def close(self):
+		'Close logfile'
+		self.logfile.close()
+
 class Worker:
 	'Main loop to work table by table'
 
-	def __init__(self, decoder, Writer, outdir=None):
-		'Prepare directory to write results and logfile'
+	def __init__(self, decoder, Writer, outdir=None, handler= None):
+		'Parse'
 		if outdir != None:
 			try:
 				mkdir(outdir)
 			except FileExistsError:
 				pass
 			chdir(outdir)
-		basicConfig(
-			filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'),
-			format = '%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-			datefmt = '%Y-%m-%d %H:%M:%S',
-			encoding = 'utf-8',
-			level = DEBUG
-		)
-		info('Starting work, writing into directory ' + getcwd())
-		info('Input method is ' + str(decoder))
-		for row in decoder.fetchall():
+		logger = Logger(handler)
+		logger.put('Starting work, writing into directory ' + getcwd())
+		logger.put('Input method is ' + str(decoder))
+		for row in decoder.fetchall(logger):
 			if isinstance(row, dict):
 				try:
 					writetable.close()
 				except NameError:
 					pass
-				info('Processing table ' + row['tablename'])
+				logger.put('Processing table ' + row['tablename'])
 				writetable = Writer(row)
 			else:
 				writetable.append(row)
 		writetable.close()
-		info('All done!')
+		decoder.close()
+		logger.put('All done!')
+		logger.close()
 
 if __name__ == '__main__':	# start here if called as application
 	argparser = ArgumentParser(description=__description__)
@@ -252,5 +290,5 @@ if __name__ == '__main__':	# start here if called as application
 		writer = Csv
 	else:
 		writer = Excel
-	worker = Worker(decoder, writer, args.outdir)
+	Worker(decoder, writer, outdir=args.outdir, handler=print)
 	sysexit(0)

@@ -4,6 +4,10 @@ Generate Excel files from a SQL table without relations
 
 ## Usage of the command line version
 
+$ ./sqldump2xlsx.py [-h] [-c] [-d STRING] [-o DIRECTORY] [-p STRING] [-s STRING] [-u STRING] [FILE]
+
+or
+
 $ python3 sqldump2xlsx.py [-h] [-c] [-d STRING] [-o DIRECTORY] [-p STRING] [-s STRING] [-u STRING] [FILE]
 
 or
@@ -36,12 +40,22 @@ Username to connect to a SQL server (default: root)
 
 ### Using git and pip
 
+A Python 3 (project started on 3.9) environment is needed.
+
+Run this:
+
 $ git clone https://github.com/markusthilo/SQLDump2Xlsx.git
 
 $ cd SQLDump2Xlsx
 
 $ pip install -r requirements.txt
 
+## GUI ##
+
+I added sqldump2xlsx_gui.py to build a Windows executable with GUI if someone wants to run the tool on a noobish operating system... :-)
+
 ## Warning
 
-This is in testing / alpha state. Accuracy is not guaranteed.
+This is in testing / alpha state.
+
+Accuracy is not guaranteed.
