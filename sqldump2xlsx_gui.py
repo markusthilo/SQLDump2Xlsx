@@ -123,15 +123,15 @@ class Main(Tk):
 				showerror('Error', 'Could not connect to MySQL server')
 				return
 		if self.fileformat.get() == 'csv':
-			writer = Csv
+			Writer = Csv
 		else:
-			writer = Excel
+			Writer = Excel
 		self.infos.config(state='normal')
 		self.infos.delete(1.0, END)
 		self.infos.configure(state='disabled')
-		Worker(decoder, writer, outdir=outdir, handler=self.handler)
+		Worker(decoder, Writer, outdir=outdir, info=self.info_handler)
 
-	def handler(self, msg):
+	def info_handler(self, msg):
 		'Use logging to show infos'
 		def append():
 			self.infos.configure(state='normal')

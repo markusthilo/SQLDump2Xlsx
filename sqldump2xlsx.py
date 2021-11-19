@@ -106,7 +106,10 @@ class SQLParser:
 	def cut_line(self, pos):
 		'Cut line, check for end of line and append next if necessary'
 		if pos == len(self.line) -1:
-			self.line = next(self.fetchline)
+			try:
+				self.line = next(self.fetchline)
+			except:
+				self.line = self.line[pos:]
 		else:
 			self.line = self.line[pos:]
 
@@ -117,6 +120,10 @@ class SQLParser:
 		self.cut_line(m_value.end())
 		return value
 
+	def fetch_next_line(self):
+		'Fetch next line preventing trouble when eof'
+		next(self.fetchline)
+
 	def decode_list(self):
 		'Decode a list / columns'
 		inside = None
@@ -124,7 +131,10 @@ class SQLParser:
 		ms = ''
 		while True:
 			if self.line == '':
-				self.line += next(self.fetchline)
+				try:
+					self.line += next(self.fetchline)
+				except:
+					break
 			char = self.line[0]
 			self.line = self.line[1:]
 			if char == self.brackets[0]:
@@ -219,29 +229,47 @@ class SQLClient:
 class Logger:
 	'Simple logging as the standard library is for different needs'
 
-	def __init__(self, handler=[stderr.write]):
+	def __init__(self, info=None, logfile=None):
 		'Create logger and logfile'
-		self.filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt')
-		self.logfile = open(self.filename, 'a')
-		self.handler = handler
-		stderr.write = self.error
+		self.info = info
+		self.logfile = logfile
 		self.buffer = ''
+		self.orig_stderr_write = stderr.write
+		stderr.write = self.handler_stderr
+
+	def logfile_open(self):
+		'Create and open logfile with timestamp'
+		self.logfile = open(datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'), 'w')
 
 	def put(self, msg):
-		'Put a message to log and handler if given'
-		if self.handler != None:
-			self.handler(msg)
-		print(datetime.now().strftime('%Y-%m-%d %H%M%S.%f ')
-			+ msg.replace('\n', ' '),
-			file=self.logfile)
-
-	def error(self, from_stderr):
-		'Handle error from stderr'
-		if from_stderr == '\n':
-			self.put(self.buffer)
-			self.buffer = ''
+		'Put a message to stdout, info handler and/or logfile'
+		if self.info == None:
+			print(msg)
 		else:
-			self.buffer += from_stderr
+			self.info(msg)
+		if self.logfile != None:
+			print(self.timestamp() + msg, file=self.logfile)
+
+	def handler_stderr(self, stream):
+		'Handle write stream from stderr'
+		if self.logfile != None or self.info != None:
+			if stream == '\n':
+				if self.logfile != None:
+					msg = self.buffer.replace('\n', ' ').rstrip(' ')
+					print(self.timestamp() + 'ERROR ' + msg, file=self.logfile)
+				if self.info != None:
+					self.info(msg)
+				else:
+					self.orig_stderr_write(self.buffer + '\n')
+				self.buffer = ''
+			else:
+				self.buffer += stream
+		else:
+			self.orig_stderr_write(stream)
+
+	def timestamp(self):
+		'Give timestamp for now'
+		return datetime.now().strftime('%Y-%m-%d %H%M%S.%f ')
 
 	def close(self):
 		'Close logfile'
@@ -250,8 +278,9 @@ class Logger:
 class Worker:
 	'Main loop to work table by table'
 
-	def __init__(self, decoder, Writer, outdir=None, handler=None):
+	def __init__(self, decoder, Writer, outdir=None, info=None):
 		'Parse'
+		logger = Logger()
 		if outdir == None:
 			outdir = decoder.name
 		try:
@@ -260,7 +289,7 @@ class Worker:
 			if listdir(outdir):
 				raise RuntimeError('Destination directory needs to be emtpy')
 		chdir(outdir)
-				logger = Logger(handler)
+		logger.logfile_open()
 		logger.put('Starting work, writing into directory ' + getcwd())
 		logger.put('Input method is ' + str(decoder))
 		for row in decoder.fetchall(logger):
@@ -312,8 +341,8 @@ if __name__ == '__main__':	# start here if called as application
 	else:
 		decoder = SQLParser(args.dumpfile)
 	if args.csv:
-		writer = Csv
+		Writer = Csv
 	else:
-		writer = Excel
-	Worker(decoder, writer, outdir=args.outdir, handler=print)
+		Writer = Excel
+	Worker(decoder, Writer, outdir=args.outdir)
 	sysexit(0)
