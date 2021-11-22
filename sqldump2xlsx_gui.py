@@ -30,7 +30,7 @@ class Main(Tk):
 		self.notebook = Notebook(self)
 		self.notebook.pack(padx=10, pady=10, expand=True)
 		### File ###
-		self.frame_file = Frame(self.notebook, width=400, height=280)
+		self.frame_file = Frame(self.notebook)#, width=400, height=280)
 		self.frame_file.pack(fill='both', expand=True)
 		self.notebook.add(self.frame_file, text='File')
 		self.filename = StringVar()
@@ -43,7 +43,7 @@ class Main(Tk):
 					)
 				)
 			).grid(column=0, row=0, sticky=W, padx=10, pady=10)
-		Entry(self.frame_file, textvariable=self.filename, width=72).grid(
+		Entry(self.frame_file, textvariable=self.filename, width=76).grid(
 			column=0, row=1, columnspan=2, padx=10, pady=10)
 
 		Button(self.frame_file,
@@ -51,7 +51,7 @@ class Main(Tk):
 			command = lambda: self.parse('file')
 		).grid(column=1, row=2, sticky=E, padx=10, pady=10)
 		### Server ###
-		self.frame_server = Frame(self.notebook, width=400, height=280)
+		self.frame_server = Frame(self.notebook)#, width=400, height=280)
 		self.frame_server.pack(fill='both', expand=True)
 		self.notebook.add(self.frame_server, text='Server')
 		self.host = self.server_field(0, 'Server:', 'localhost')
@@ -79,7 +79,7 @@ class Main(Tk):
 		### Infos ###
 		self.labelframe_infos = LabelFrame(self, text='Infos')
 		self.labelframe_infos.pack(padx=10, pady=10, fill='x')
-		self.infos = ScrolledText(self.labelframe_infos, padx=10, pady=10, width=80)
+		self.infos = ScrolledText(self.labelframe_infos, padx=10, pady=10, width=80, height=10)
 		self.infos.bind("<Key>", lambda e: "break")
 		self.infos.insert(END, 'Select SQL dump file or connect to server')
 		self.infos.pack(padx=10, pady=10)
@@ -92,7 +92,7 @@ class Main(Tk):
 		entry = StringVar(None, default)
 		Label(self.frame_server, text=label).grid(
 			column=0, row=row, sticky=W, padx=10, pady=10)
-		Entry(self.frame_server, textvariable=entry, width=60).grid(
+		Entry(self.frame_server, textvariable=entry, width=66).grid(
 			column=1, row=row, sticky=E, padx=10, pady=10)
 		return entry
 
@@ -174,5 +174,5 @@ AfjhATzE28hQfb2YykdZprefvR/wsJy/ToQZu3KuCiwpt+WbL0hetj5/DDzTrku/xW3bUnmXJB9l
 QWw3WWZs90Od/suj7zldhKd40NeOOfV2lbTtLd/dVxK3Sp4aUzoNRO9c5iRJXSewOXw5bU00//pk
 fTKLQh/bYIT8twF58Yf9pwf9m2nqlTMc8D6aw1fS+r3b9/8BKtc/NFcHINi4Q8kAAAAASUVORK5C
 YII=
-''')
+	''')
 	window.mainloop()

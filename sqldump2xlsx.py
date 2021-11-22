@@ -302,7 +302,6 @@ class Worker:
 					writetable.close()
 				except NameError:
 					pass
-				logger.put('Processing table ' + row['tablename'])
 				writetable = Writer(row)
 				thistable = row
 			else:
