@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-11-18'
+__version__ = '0.1_2021-11-22'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -67,6 +67,7 @@ class Csv:
 		else:
 			self.csvfile = open(filename, 'w')
 		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
+		self.writer.writerow(table['colnames'])
 
 	def append(self, row):
 		'Append one row to CSV file'
@@ -292,7 +293,10 @@ class Worker:
 		logger.logfile_open()
 		logger.put('Starting work, writing into directory ' + getcwd())
 		logger.put('Input method is ' + str(decoder))
+		thistable = None
 		for row in decoder.fetchall(logger):
+			if row == thistable:
+				continue
 			if isinstance(row, dict):
 				try:
 					writetable.close()
@@ -300,6 +304,7 @@ class Worker:
 					pass
 				logger.put('Processing table ' + row['tablename'])
 				writetable = Writer(row)
+				thistable = row
 			else:
 				writetable.append(row)
 		writetable.close()
