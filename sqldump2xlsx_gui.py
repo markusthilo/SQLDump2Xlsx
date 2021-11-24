@@ -16,6 +16,7 @@ from tkinter.messagebox import showerror
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime
 from sys import stderr, stdout
+from os import listdir
 from sqldump2xlsx import *
 
 class Main(Tk):
@@ -104,6 +105,10 @@ class Main(Tk):
 			title = 'Choose directory to write generatde file(s)',
 			mustexist=False
 		)
+		print('DEBUG: outdir', outdir)
+		if listdir(outdir):
+			showerror('Error', 'Destination directory needs to be emtpy')
+			return
 		if source == 'file':
 			try:
 				dumpfile = open(self.filename.get(), 'rt')
