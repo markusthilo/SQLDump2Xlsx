@@ -45,10 +45,14 @@ class Excel:
 	def append(self, row):
 		'Append one row to Excel worksheet'
 		for col_cnt in range(len(row)):
-			if isinstance(row[col_cnt], datetime):
-				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt], self.datetime)
-			else:
+			if isinstance(row[col_cnt], bytes):
+				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt].decode())
+			elif isinstance(row[col_cnt], datetime):
+				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt].strftime('%Y-%m-%d_%H:%M:%S.%f'))
+			if isinstance(row[col_cnt], str) or isinstance(row[col_cnt], int) or isinstance(row[col_cnt], float):
 				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt])
+			else:
+				self.worksheet.write(self.__row_cnt__, col_cnt, str(row[col_cnt]))
 		self.__row_cnt__ += 1
 
 	def close(self):
@@ -80,125 +84,139 @@ class Csv:
 class SQLParser:
 	'Parse without a running SQL server'
 
-	def __init__(self, dumpfile, quotes=('"', "'"), brackets=('(', ')')):
+	def __init__(self, dumpfile, quotes=('"', "'", '`')):
 		'Open SQL Dump'
 		self.quotes = quotes
-		self.brackets = brackets
 		self.dumpfile = dumpfile
 		self.name = sub('\.[^.]*$', '', dumpfile.name)
+		self.fetchline = self.readlines()
+		self.line = ''
 
 	def readlines(self):
 		'Line by line'
-		for line in self.dumpfile:
-			if search(' *--|^$', line) == None:
-				yield line.rstrip('\n')
+		for rawline in self.dumpfile:
+			cleanline = rawline.rstrip('\n')
+			if cleanline != '':
+				yield cleanline
 
-	def norm_str(self, ins):
-		'Normalize a string'
-		if isinstance(ins, str):
-			return sub('\W+', '', ins)
-		else:
-			return ins
-
-	def norm_iter(self, it):
-		'Normalize elements of an iterable an return a list'
-		return [ self.norm_str(e) for e in it ]
-
-	def cut_line(self, pos):
-		'Cut line, check for end of line and append next if necessary'
-		if pos == len(self.line) -1:
+	def check_next_line(self):
+		'Check for end of line and get next if nexessary'
+		while self.line == '':
 			try:
 				self.line = next(self.fetchline)
 			except:
-				self.line = self.line[pos:]
-		else:
-			self.line = self.line[pos:]
+				return True
+			if search('^[ \t]*--', self.line) != None:
+				self.line == ''
+		return False
 
-	def decode_value(self):
-		'Find a given command'
-		m_value = search('[ ("]|$', self.line.upper())
-		value = self.norm_str(self.line[:m_value.start()])
-		self.cut_line(m_value.end())
-		return value
-
-	def fetch_next_line(self):
-		'Fetch next line preventing trouble when eof'
-		next(self.fetchline)
-
-	def decode_list(self):
-		'Decode a list / columns'
-		inside = None
-		bcount = 1
-		ms = ''
-		while True:
-			if self.line == '':
-				try:
-					self.line += next(self.fetchline)
-				except:
-					break
-			char = self.line[0]
-			self.line = self.line[1:]
-			if char == self.brackets[0]:
-				continue
-			if char == inside:
-				if char == self.quotes:
-					inside = None
-				else:
-					inside = char
-				ms += char
-			elif char == self.brackets[0]:
-				bcount += 1
-				if bcount < 1:
-					continue
-				else:
-					ms += char
-			elif char == self.brackets[1]:
-				bcount -= 1
-				if bcount < 1:
-					break
-				else:
-					ms += char
-			else:
-				ms += char
-		return self.norm_iter(ms.split(','))
+	def fetch_next_char(self):
+		'Fetch the next character'
+		if self.check_next_line():
+			return None
+		char = self.line[0]
+		self.line = self.line[1:]
+		return char
 
 	def find_cmd(self, cmd):
 		'Find a given command'
-		m_cmd = search(f'^{cmd} | {cmd} | {cmd}$|^{cmd}$', self.line.upper())
-		if m_cmd == None:
-			return False
-		self.cut_line(m_cmd.end())
+		len_cmd = len(cmd)
+		while True:
+			if self.check_next_line():
+				return True
+			if self.line[:len_cmd].upper() == cmd:
+				self.line = self.line[len_cmd:]
+				return False
+			self.line = self.line[1:]
 		return True
 
-	def check_seperator(self):
-		'Comma or semicolon?'
-		m_comma = search(' *,', self.line)
-		if m_comma != None:
-			self.cut_line(m_comma.end())
-			return ','
-		m_semicolon = search(' *;', self.line)
-		if m_semicolon != None:
-			self.cut_line(m_semicolon.end())
-			return ';'
-		return None
+	def fetch_quotes(self, quote):
+		'Fetch everything inside quotes'
+		text = ''
+		while True:
+			char = self.fetch_next_char()
+			if char == '\\':
+				text += char
+				char = self.fetch_next_char()
+				if char == None:
+					return text
+				text += char
+				continue
+			if char == quote:
+				return text
+			text += char
+
+	def fetch_value(self, isinbrackets=True):
+		'Fetch a value. Might be table name or column.'
+		value = ''
+		while True:
+			char = self.fetch_next_char()
+			if not char in (' ', '\t'):
+				break
+		while char != None:
+			if char in self.quotes:
+				value += self.fetch_quotes(char)
+			elif char == '(':
+				insidebrackets = self.fetch_value()
+				if insidebrackets == None:
+					return value
+				value += char + insidebrackets
+			elif char == ')' and isinbrackets:
+				return value + char
+			elif char in (',', ';', ' ', '\t'):
+				return value + char
+			else:
+				value += char
+			char = self.fetch_next_char()
+		return value
+
+	def fetch_list(self):
+		'Decode a list / columns'
+		lst = []
+		while True:
+			char = self.fetch_next_char()
+			if char == '(':
+				break
+			if char == None:
+				return None
+		while True:
+			value = self.fetch_value()
+			lst.append(value[:-1])
+			if value[-1] == ')':
+				return lst
+
+	def fetch_seperator(self):
+		'Fetch , or ;'
+		while True:
+			char = self.fetch_next_char()
+			if char in (';', ',', None):
+				return char
 
 	def fetchall(self, logger):
 		'Decode SQL INSERT'
-		self.fetchline = self.readlines()
-		for self.line in self.fetchline:
-			if self.find_cmd('INSERT') and self.find_cmd('INTO'):
-				tablename = self.decode_value()
-				logger.put('Found INSERT INTO ' + tablename)
-				yield {'tablename': tablename, 'colnames': self.decode_list()}
-				if self.find_cmd('VALUES'):
-					while True:
-						yield self.decode_list()
-						seperator = self.check_seperator()
-						if seperator == ';':
-							break
-						if seperator == None:
-							logger.put('WARNING: Missing seperator - some rows might beeing ignored')
-							break
+		while True:
+			if self.find_cmd('INSERT') or self.find_cmd('INTO'):
+				break
+			tablename = self.fetch_value(isinbrackets=False)
+			if tablename == None:
+				break
+			logger.put('Found INSERT INTO ' + tablename)
+			colnames = self.fetch_list()
+			if colnames == None:
+				break
+			yield {'tablename': tablename, 'colnames': colnames}
+			if self.find_cmd('VALUES'):
+				break
+			print('DEBUG VALUES', self.line)
+			while True:
+				values = self.fetch_list()
+				yield values
+				seperator = self.fetch_seperator()
+				if seperator == ',':
+					continue
+				if seperator == None:
+					logger.put('WARNING: Missing seperator - some rows might beeing ignored')
+				break
 
 	def close(self):
 		'Close input SQL dump file'
@@ -209,11 +227,11 @@ class SQLClient:
 
 	def __init__(self, host='localhost', user='root', password='root', database='test'):
 		'Generate client to a given database'
-		db = Mysql.connect(host=host, user=user, password=password, database=database)
-		self.cursor = db.cursor()
+		self.db = Mysql.connect(host=host, user=user, password=password, database=database)
 		self.name = database
 
 	def fetchall(self, logger):
+		cursor = self.db.cursor()
 		cursor.execute('SHOW tables;')
 		for table in cursor.fetchall():
 			logger.put('Executing SELECT * FROM ' + table[0])
@@ -304,9 +322,12 @@ class Worker:
 					pass
 				writetable = Writer(row)
 				thistable = row
-			else:
+			elif row != None:
 				writetable.append(row)
-		writetable.close()
+		try:
+			writetable.close()
+		except:
+			raise RuntimeError('No files generated')
 		decoder.close()
 		logger.put('All done!')
 		logger.close()
@@ -331,7 +352,7 @@ if __name__ == '__main__':	# start here if called as application
 	argparser.add_argument('-u', '--user', type=str, default='root',
 		help='Username to connect to a SQL server (default: root)', metavar='STRING'
 	)
-	argparser.add_argument('dumpfile', nargs='?', type=FileType('rt'),
+	argparser.add_argument('dumpfile', nargs='?', type=FileType('rt', encoding='utf8'),
 		help='SQL dump file to read (if none: try to connect  a server)', metavar='FILE'
 	)
 	args = argparser.parse_args()

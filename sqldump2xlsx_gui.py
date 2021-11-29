@@ -105,7 +105,6 @@ class Main(Tk):
 			title = 'Choose directory to write generatde file(s)',
 			mustexist=False
 		)
-		print('DEBUG: outdir', outdir)
 		if listdir(outdir):
 			showerror('Error', 'Destination directory needs to be emtpy')
 			return
