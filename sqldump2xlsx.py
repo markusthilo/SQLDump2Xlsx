@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-11-22'
+__version__ = '0.2_2021-11-30'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -65,11 +65,11 @@ class Csv:
 	def __init__(self, table):
 		'Generate CSV file and writer'
 		self.tablename = table['tablename']
-		filename = table['tablename'] + 'csv'
+		filename = table['tablename'] + '.csv'
 		if path.exists(filename):
-			self.csvfile = open(filename, 'a')
+			self.csvfile = open(filename, 'a', encoding='utf-8', newline='')
 		else:
-			self.csvfile = open(filename, 'w')
+			self.csvfile = open(filename, 'w', encoding='utf-8', newline='')
 		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
 		self.writer.writerow(table['colnames'])
 
@@ -200,6 +200,7 @@ class SQLParser:
 			tablename = self.fetch_value(isinbrackets=False)
 			if tablename == None:
 				break
+			tablename = tablename[:-1]
 			logger.put('Found INSERT INTO ' + tablename)
 			colnames = self.fetch_list()
 			if colnames == None:
@@ -207,7 +208,6 @@ class SQLParser:
 			yield {'tablename': tablename, 'colnames': colnames}
 			if self.find_cmd('VALUES'):
 				break
-			print('DEBUG VALUES', self.line)
 			while True:
 				values = self.fetch_list()
 				yield values
@@ -299,7 +299,7 @@ class Worker:
 
 	def __init__(self, decoder, Writer, outdir=None, info=None):
 		'Parse'
-		logger = Logger()
+		logger = Logger(info=info)
 		if outdir == None:
 			outdir = decoder.name
 		try:

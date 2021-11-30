@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.1_2021-11-22'
+__version__ = '0.2_2021-11-30'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -31,7 +31,7 @@ class Main(Tk):
 		self.notebook = Notebook(self)
 		self.notebook.pack(padx=10, pady=10, expand=True)
 		### File ###
-		self.frame_file = Frame(self.notebook)#, width=400, height=280)
+		self.frame_file = Frame(self.notebook)
 		self.frame_file.pack(fill='both', expand=True)
 		self.notebook.add(self.frame_file, text='File')
 		self.filename = StringVar()
@@ -44,7 +44,7 @@ class Main(Tk):
 					)
 				)
 			).grid(column=0, row=0, sticky=W, padx=10, pady=10)
-		Entry(self.frame_file, textvariable=self.filename, width=76).grid(
+		Entry(self.frame_file, textvariable=self.filename, width=112).grid(
 			column=0, row=1, columnspan=2, padx=10, pady=10)
 
 		Button(self.frame_file,
@@ -52,7 +52,7 @@ class Main(Tk):
 			command = lambda: self.parse('file')
 		).grid(column=1, row=2, sticky=E, padx=10, pady=10)
 		### Server ###
-		self.frame_server = Frame(self.notebook)#, width=400, height=280)
+		self.frame_server = Frame(self.notebook)
 		self.frame_server.pack(fill='both', expand=True)
 		self.notebook.add(self.frame_server, text='Server')
 		self.host = self.server_field(0, 'Server:', 'localhost')
