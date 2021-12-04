@@ -84,10 +84,26 @@ class Csv:
 class SQLParser:
 	'Parse without a running SQL server'
 
-	def __init__(self, dumpfile, quotes=('"', "'", '`')):
-		'Open SQL Dump'
-		self.quotes = quotes
+	def __init__(self,
+		dumpfile,
+		quotes = '\'"`',
+		blanks = ' \t',
+		brackets = '()',
+		seperator = ',',
+		eoc = ';',
+		eol = '\n',
+		skiplinereg = '^[\t ]*--'
+	):
+		'Initialize parser object, open SQL Dump and set definitions'
 		self.dumpfile = dumpfile
+		self.quotes = quotes
+		self.blanks = blanks
+		self.brackets = brackets
+		self.seperator = seperator
+		self.eoc = eoc
+		self.eol = eol
+		self.skiplinereg = skiplinereg
+		self.endvalue = quotes + blanks + (seperator + eoc)
 		self.name = sub('\.[^.]*$', '', dumpfile.name)
 		self.fetchline = self.readlines()
 		self.line = ''
@@ -95,31 +111,43 @@ class SQLParser:
 	def readlines(self):
 		'Line by line'
 		for rawline in self.dumpfile:
-			cleanline = rawline.rstrip('\n')
+			cleanline = rawline.rstrip(self.eol)
 			if cleanline != '':
 				yield cleanline
 
 	def check_next_line(self):
-		'Check for end of line and get next if nexessary'
+		'Check for end of line and get next if nexessary. Return True on EOF.'
 		while self.line == '':
 			try:
 				self.line = next(self.fetchline)
 			except:
 				return True
-			if search('^[ \t]*--', self.line) != None:
+			if search(self.skiplinereg, self.line) != None:
 				self.line == ''
 		return False
 
-	def fetch_next_char(self):
+	def fetch_next_char(self, skipblanks=False):
 		'Fetch the next character'
-		if self.check_next_line():
-			return None
-		char = self.line[0]
-		self.line = self.line[1:]
-		return char
+		while True:
+			if self.check_next_line():
+				return None
+			char = self.line[0]
+			self.line = self.line[1:]
+			if not skipblanks or not char in self.blanks:
+				return char
+
+	def find_char(self, *chars):
+		'Find a one of given characters'
+		while True:
+			char = self.fetch_next_char()
+			if char == None:
+				return None
+			if char in chars:
+				return char
+		return None
 
 	def find_cmd(self, cmd):
-		'Find a given command'
+		'Find a given command. Return True on EOF.'
 		len_cmd = len(cmd)
 		while True:
 			if self.check_next_line():
@@ -146,77 +174,117 @@ class SQLParser:
 				return text
 			text += char
 
-	def fetch_value(self, isinbrackets=True):
-		'Fetch a value. Might be table name or column.'
+	def fetch_value(self, isinbrackets=True, skipafterquotes=True):
+		'Fetch a value. Might be table name or column. Seek bracket on isinbrackets=False'
 		value = ''
 		while True:
-			char = self.fetch_next_char()
-			if not char in (' ', '\t'):
-				break
-		while char != None:
+			char = self.fetch_next_char(skipblanks=True)
+			if char == None:
+				return value, None
 			if char in self.quotes:
 				value += self.fetch_quotes(char)
-			elif char == '(':
-				insidebrackets = self.fetch_value()
-				if insidebrackets == None:
-					return value
-				value += char + insidebrackets
-			elif char == ')' and isinbrackets:
-				return value + char
-			elif char in (',', ';', ' ', '\t'):
-				return value + char
-			else:
-				value += char
-			char = self.fetch_next_char()
-		return value
-
-	def fetch_list(self):
-		'Decode a list / columns'
-		lst = []
-		while True:
-			char = self.fetch_next_char()
+				if skipafterquotes:
+					return value, self.find_char(self.seperator, self.quotes[1], self.eoc)
+				continue
 			if char == '(':
-				break
-			if char == None:
-				return None
-		while True:
-			value = self.fetch_value()
-			lst.append(value[:-1])
-			if value[-1] == ')':
-				return lst
+				inbrackets, endchar = self.fetch_value()
+				if inbrackets == None:
+					return value, None
+				value += char + inbrackets + endchar
+				continue
+			if char == ')' or ( not isinbrackets and char in self.endvalue ):
+				return value, char
+			value += char
 
-	def fetch_seperator(self):
-		'Fetch , or ;'
+	def fetch_list(self, skipbracket=False):
+		'Decode a list / columns. Skip search for 1st bracket on True'
+		lst = []
+		if not skipbracket:
+			char = self.fetch_char(self.brackets[0])
+			if char == None:
+				return lst, None
+		while True:
+			value, endchar = self.fetch_value(skipblanks=True)
+			lst.append(value)
+			if endchar == ')':
+				return lst, endchar
+
+	def fetch_cmd(self, *patterns):
+		'Find next cmd and return it'
 		while True:
 			char = self.fetch_next_char()
-			if char in (';', ',', None):
-				return char
+			if char == None:
+				return None, None
+			if char in self.quotes:
+				self.fetch_quotes(char)
+			if char in patterns:
+				return char, char
+			if char.isalpha():
+				found = char.upper()
+				while True:
+					char = self.fetch_next_char()
+					if char == None:
+						return found, None
+					if not char.isalnum():
+						if found in patterns:
+							return found, char
+						break
+					found += char.upper()
+			found = ''
 
 	def fetchall(self, logger):
-		'Decode SQL INSERT'
+		'Decode SQL'
 		while True:
-			if self.find_cmd('INSERT') or self.find_cmd('INTO'):
+			cmd, seperator = self.fetch_cmd('INSERT', 'CREATE')
+			if cmd == None or seperator == None:
 				break
-			tablename = self.fetch_value(isinbrackets=False)
-			if tablename == None:
-				break
-			tablename = tablename[:-1]
-			logger.put('Found INSERT INTO ' + tablename)
-			colnames = self.fetch_list()
-			if colnames == None:
-				break
-			yield {'tablename': tablename, 'colnames': colnames}
-			if self.find_cmd('VALUES'):
-				break
-			while True:
-				values = self.fetch_list()
-				yield values
-				seperator = self.fetch_seperator()
-				if seperator == ',':
-					continue
-				if seperator == None:
-					logger.put('WARNING: Missing seperator - some rows might beeing ignored')
-				break
+			if cmd == 'CREATE':
+				if self.find_cmd('TABLE'):
+					break
+				tablename = self.fetch_value(isinbrackets=False)
+				if tablename == None:
+					break
+				tablename = tablename[:-1]
+				logger.put('Found CREATE TABLE ' + tablename)
+				colnames = self.fetch_list()
+				if colnames != None:
+					yield {'tablename': tablename, 'colnames': colnames}
+				continue
+			if cmd == 'INSERT':
+				if self.find_cmd('INTO'):
+					break
+				newtablename = self.fetch_value(isinbrackets=False)
+				if newtablename == None:
+					break
+				newtablename = newtablename[:-1]
+				logger.put('Found INSERT INTO ' + newtablename)
+				cmd, seperator = self.fetch_cmd('VALUES', '(')
+				if cmd != 'VALUES':
+					newcolnames = self.fetch_list(skipbracket=(cmd=='('))
+					if newcolnames == None:
+						if newtablename != tablename:
+							break
+					else:
+						colnames = newcolnames
+					
+					print('DEBUG', newcolnames)
+					print(f'DEBUG self.line: >{self.line}<')
+					
+					if self.find_cmd('VALUES'):
+						break
+				tablename = newtablename
+				yield {'tablename': tablename, 'colnames': colnames}
+				skipbracket = seperator == '('
+				while True:
+					values = self.fetch_list(skipbracket=skipbracket)
+					skipbracket = False
+					yield values
+					seperator = self.fetch_seperator()
+					if seperator == ',':
+						continue
+					if seperator == None:
+						logger.put('WARNING: Missing seperator - some rows might beeing ignored')
+					break
 
 	def close(self):
 		'Close input SQL dump file'
