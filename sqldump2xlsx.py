@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.2_2021-11-30'
+__version__ = '0.2_2021-12-06'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -88,20 +88,24 @@ class SQLParser:
 		dumpfile,
 		quotes = '\'"`',
 		blanks = ' \t',
-		brackets = '()',
+		openbt = '(',
+		closebt = ')',
 		seperator = ',',
 		eoc = ';',
 		eol = '\n',
+		escape = '\\',
 		skiplinereg = '^[\t ]*--'
 	):
 		'Initialize parser object, open SQL Dump and set definitions'
 		self.dumpfile = dumpfile
 		self.quotes = quotes
 		self.blanks = blanks
-		self.brackets = brackets
+		self.openbt = openbt
+		self.closebt = closebt
 		self.seperator = seperator
 		self.eoc = eoc
 		self.eol = eol
+		self.escape = escape
 		self.skiplinereg = skiplinereg
 		self.endvalue = quotes + blanks + (seperator + eoc)
 		self.name = sub('\.[^.]*$', '', dumpfile.name)
@@ -163,7 +167,7 @@ class SQLParser:
 		text = ''
 		while True:
 			char = self.fetch_next_char()
-			if char == '\\':
+			if char == self.escape:
 				text += char
 				char = self.fetch_next_char()
 				if char == None:
@@ -186,13 +190,13 @@ class SQLParser:
 				if skipafterquotes:
 					return value, self.find_char(self.seperator, self.quotes[1], self.eoc)
 				continue
-			if char == '(':
+			if char == self.openbt:
 				inbrackets, endchar = self.fetch_value()
 				if inbrackets == None:
 					return value, None
 				value += char + inbrackets + endchar
 				continue
-			if char == ')' or ( not isinbrackets and char in self.endvalue ):
+			if char == self.closebt or ( not isinbrackets and char in self.endvalue ):
 				return value, char
 			value += char
 
@@ -200,13 +204,13 @@ class SQLParser:
 		'Decode a list / columns. Skip search for 1st bracket on True'
 		lst = []
 		if not skipbracket:
-			char = self.fetch_char(self.brackets[0])
+			char = self.find_char(self.openbt)
 			if char == None:
 				return lst, None
 		while True:
-			value, endchar = self.fetch_value(skipblanks=True)
+			value, endchar = self.fetch_value()
 			lst.append(value)
-			if endchar == ')':
+			if endchar == self.closebt:
 				return lst, endchar
 
 	def fetch_cmd(self, *patterns):
@@ -235,20 +239,22 @@ class SQLParser:
 	def fetchall(self, logger):
 		'Decode SQL'
 		while True:
-			cmd, seperator = self.fetch_cmd('INSERT', 'CREATE')
-			if cmd == None or seperator == None:
+			cmd, nextchar = self.fetch_cmd('INSERT', 'CREATE')
+			if cmd == None or nextchar == None:
 				break
 			if cmd == 'CREATE':
 				if self.find_cmd('TABLE'):
 					break
-				tablename = self.fetch_value(isinbrackets=False)
-				if tablename == None:
+				tablename, nextchar = self.fetch_value(isinbrackets=False)
+				if tablename == None or nextchar == None:
 					break
-				tablename = tablename[:-1]
 				logger.put('Found CREATE TABLE ' + tablename)
-				colnames = self.fetch_list()
+				colnames, nextchar = self.fetch_list()
+				print(f'DEBUG: colnames= >{colnames}<, nextchar = >{nextchar}<') 
 				if colnames != None:
 					yield {'tablename': tablename, 'colnames': colnames}
+				if nextchar == None:
+					break
 				continue
 			if cmd == 'INSERT':
 				if self.find_cmd('INTO'):
