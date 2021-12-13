@@ -188,7 +188,7 @@ class SQLParser:
 			if char in self.quotes:
 				value += self.fetch_quotes(char)
 				if skipafterquotes:
-					return value, self.find_char(self.seperator, self.quotes[1], self.eoc)
+					return value, self.find_char(self.seperator, self.closebt, self.eoc)
 				continue
 			if char == self.openbt:
 				inbrackets, endchar = self.fetch_value()
