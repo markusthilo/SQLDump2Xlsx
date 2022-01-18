@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-01-17'
+__version__ = '0.2_2022-01-17'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
-__description__ = 'Generate Excel files from SQL dump without relations'
+__description__ = 'Generate Excel files from a SQL table without relations'
 
 from mysql import connector as Mysql
 from xlsxwriter import Workbook
 from datetime import datetime
-from re import sub, search, match
+from re import sub, search
 from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
 from os import chdir, mkdir, getcwd, path, listdir
@@ -130,109 +130,6 @@ class Csv:
 		'Close file'
 		self.csvfile.close()
 
-class SQLDump:
-	'Handle dump file'
-
-	def __init__(self, dumpfile, logger):
-		'Create object for one sql dump file'
-		self.dumpfile = dumpfile
-		self.logger = logger
-
-	def get_char(self, line):
-		'Fetch the next character'
-		if not line:
-			return '', line
-		return line[0], line[1:]
-
-	def get_word(self, line):
-		'Get one word'
-		word = ''
-		while True:
-			char, line = self.get_char(line)
-			if char == None or char in ' \t,;()"\'':
-				return word, char, line
-			word += char
-
-	def skip_blanks(self, line):
-		'Skip tabs and spaces'
-		while line and line[0] in ' \t':
-			line = line[1:] 
-		return line
-
-	def read_line(self):
-		'Read line from file and emove indent and newline, skip empty lines and comments'
-		while True:
-			line = self.dumpfile.readline()
-			print(f'>{line}<')
-			if not line:	# eof?
-				return ''
-			
-			line = self.skip_blanks(line.rstrip('\n'))
-			
-			if line and line[0] != '/' and line[:2] != '--':
-				return line
-
-	def fetch_quotes(self, quote, line):
-		'Fetch everything inside quotes'
-		text = ''
-		while True:
-			char, line = self.get_char(line)
-			if not char:	# read next line if line is empty
-				line = self.dumpfile.readline()
-				if not line:	# eof
-					return text, line
-				text += '\\n'	# generate newline char
-				continue
-			if char == '\\':	# get next char when escaped
-				text += char
-				char, line = self.get_char(line)
-				if char == None:
-					continue
-				text += char
-				continue
-			if char == quote:
-				return text, line
-			text += char
-
-	def read_cmds(self):
-		'Line by line'
-		line = ''
-		brcnt = 0
-		cmd = list()
-		while True:
-			if not line:	# if this line is empty, read line from dump file
-				line = self.read_line()
-				if not line:
-					break
-			line = self.skip_blanks(line)
-			char, line = self.get_char(line)
-			if char.isalpha():	# instruction or argument
-				word, char, line = self.get_word(char + line)
-				cmd.append(word)
-			if char in '\'"`':	# skip everything inside quotes
-				text, line = self.fetch_quotes(char, line)
-				cmd.append(text)
-				continue
-			if char == '(':
-				brcnt += 1
-				if brcnt == 1:
-					elcnt = 1
-				continue
-			if char == ')':
-				brcnt -= 1
-				if brcnt < 0:
-					self.logger.put('Bracket closed without opening')
-					brcnt = 0
-				continue
-			if char == ',':
-				elcnt += 1
-				continue
-			if char == ';' and brcnt == 0:
-				print(cmd)
-				cmd = list()
-			
-
-
 class SQLParser:
 	'Parse without a running SQL server'
 
@@ -264,7 +161,12 @@ class SQLParser:
 		self.fetchline = self.readlines()
 		self.line = ''
 
-
+	def readlines(self):
+		'Line by line'
+		for rawline in self.dumpfile:
+			cleanline = rawline.rstrip(self.eol)
+			if cleanline != '':
+				yield cleanline
 
 	def check_next_line(self):
 		'Check for end of line and get next if nexessary. Return True on EOF.'
@@ -536,15 +438,6 @@ if __name__ == '__main__':	# start here if called as application
 			database=args.database
 		)
 	else:
-		
-		### DEBUG ###
-		logger = Logger()
-		sqld = SQLDump(args.dumpfile, logger)
-		sqld.read_cmds()
-		
-		exit()
-		#############
-
 		decoder = SQLParser(args.dumpfile)
 	if args.csv:
 		Writer = Csv
