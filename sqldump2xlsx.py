@@ -133,11 +133,9 @@ class Csv:
 class SQLDump:
 	'Handle dump file'
 
-	def __init__(self, dumpfile, logger):
+	def __init__(self, dumpfile):
 		'Create object for one sql dump file'
 		self.dumpfile = dumpfile
-		self.readcnt = 0
-		self.logger = logger
 
 	def get_char(self, line):
 		'Fetch the next character'
@@ -184,7 +182,7 @@ class SQLDump:
 			while not line or line == '\n':	# read from dumpfile
 				line = self.dumpfile.readline()
 				if not line:	# eof
-					return
+					return cmd
 				line = line.lstrip(' \t')	# skip leading blanks
 				if line[0] in '-/':	# ignore comments and inimportand lines
 					line = ''
@@ -231,15 +229,18 @@ class Worker:
 	def __init__(self, decoder, Writer, outdir=None, info=None):
 		'Parse'
 		logger = Logger(info=info)
-		if outdir == None:
-			outdir = decoder.name
-		try:
-			mkdir(outdir)
-		except FileExistsError:
-			if listdir(outdir):
-				raise RuntimeError('Destination directory needs to be emtpy')
-		chdir(outdir)
-		logger.logfile_open()
+		#if outdir == None:
+		#	outdir = decoder.name
+		#try:
+		#	mkdir(outdir)
+		#except FileExistsError:
+		#	if listdir(outdir):
+		#		raise RuntimeError('Destination directory needs to be emtpy')
+		#chdir(outdir)
+		#logger.logfile_open()
+		for cmd in decoder.read_cmds():
+			print(cmd)
+		return
 		logger.put('Starting work, writing into directory ' + getcwd())
 		logger.put('Input method is ' + str(decoder))
 		thistable = None
@@ -295,7 +296,7 @@ if __name__ == '__main__':	# start here if called as application
 			database=args.database
 		)
 	else:
-		decoder = SQLParser(args.dumpfile)
+		decoder = SQLDump(args.dumpfile)
 	if args.csv:
 		Writer = Csv
 	else:
