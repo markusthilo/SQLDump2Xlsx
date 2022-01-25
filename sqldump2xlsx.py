@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-01-17'
+__version__ = '0.3_2022-01-24'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
 __description__ = 'Generate Excel files from SQL dump without relations'
 
 from mysql import connector as Mysql
+from sqlite3 import connect as Sqlite
 from xlsxwriter import Workbook
 from datetime import datetime
 from re import sub, search, match
@@ -133,6 +134,48 @@ class Csv:
 class SQLDump:
 	'Handle dump file'
 
+	SQL_COMMANDS = (
+		'*',
+		'AND',
+		'AS',
+		'BETWEEN',
+		'BY',
+		'COMMIT',
+		'CREATE',
+		'DATABASE',
+		'DELETE',
+		'DISTINCT',
+		'DROP',
+		'EXISTS',
+		'FULL',
+		'GRANT',
+		'GROUP',
+		'HAVING',
+		'IN',
+		'INDEX',
+		'INNER',
+		'INSERT',
+		'INTO',
+		'JOIN',
+		'LEFT',
+		'LIKE',
+		'OR',
+		'ORDER',
+		'PRIMARY',
+		'REVOKE',
+		'RIGHT',
+		'ROLLBACK',
+		'SAVEPOINT',
+		'SELECT',
+		'TABLE',
+		'TOP',
+		'TRUNCATE',
+		'UNION',
+		'UPDATE',
+		'VIEW',
+		'WHERE'
+	)
+
 	def __init__(self, dumpfile):
 		'Create object for one sql dump file'
 		self.dumpfile = dumpfile
@@ -148,7 +191,7 @@ class SQLDump:
 		word = ''
 		while True:
 			char, line = self.get_char(line)
-			if char == None or char in ' \t,;()"\'':
+			if char == None or char in ' \t,;()"\'\n':
 				return word, char, line
 			word += char
 
@@ -176,29 +219,117 @@ class SQLDump:
 
 	def read_cmds(self):
 		'Line by line'
-		line = ''
+		line = '\n'
+		char = '\n'
 		cmd = list()
-		while True:
-			while not line or line == '\n':	# read from dumpfile
-				line = self.dumpfile.readline()
-				if not line:	# eof
-					return cmd
-				line = line.lstrip(' \t')	# skip leading blanks
-				if line[0] in '-/':	# ignore comments and inimportand lines
-					line = ''
-					continue
-			char, line = self.get_char(line)	# char by char
-			if char.isalpha():	# instruction or argument
+		while char:	# loop until eof
+			if char == ';':	# give back whole comment on ;
+				yield cmd
+				cmd = list()
+			elif char in '(),':	# special chars
+				cmd.append(char)
+			elif char.isalnum():	# instruction or argument
 				word, char, line = self.get_word(char + line)
 				cmd.append(word)
+				continue
 			elif char in '\'"`':	# skip everything inside quotes
 				text, line = self.fetch_quotes(char, line)
 				cmd.append(char + text + char)
-			elif char in '(),':
-				cmd.append(char)
-			elif char == ';':
-				yield cmd
-				cmd = list()
+			while not line or line == '\n':	# read from dumpfile
+				line = self.dumpfile.readline()
+				if not line:	# eof
+					char = ''
+					break
+				line = line.lstrip(' \t')	# skip leading blanks
+				if line[0] in '-/':	# ignore comments and unimportand lines
+					line = ''
+					continue
+			char, line = self.get_char(line)	# char by char
+		if cmd != list():	# tolerate missing last ;
+			yield cmd
+
+class SQLDecoder:
+	'Decode SQL dump to SQLite compatible commands'
+
+	def __init__(self, dumpfile):
+		'Generate naked Object'
+		self.sqldump = SQLDump(dumpfile)
+
+	def get_next(self, part_cmd):
+		'Get next element'
+		if part_cmd == list():	# to be save
+			return '', list()
+		return part_cmd[0], part_cmd[1:]
+
+	def get_next_upper(self, part_cmd):
+		'Get next element and normalize tu upper chars'
+		if part_cmd == list():	# to be save
+			return '', list()
+		return part_cmd[0].upper(), part_cmd[1:]
+
+	def check_strings(self, part_cmd, *strings):
+		'Check for matching, strings must be uppercase'
+		if part_cmd == list():	# to be save
+			return '', list()
+		if part_cmd[0].upper() in strings:
+			return part_cmd[0], part_cmd[1:]
+		return '', part_cmd
+
+	def seek_strings(self, part_cmd, *strings):
+		'Seek matching string'
+		first_part_cmd = list()
+		while part_cmd != list():
+			matching, part_cmd = self.check_strings(part_cmd, *strings)
+			if matching:
+				return first_part_cmd, matching, part_cmd
+			first_part_cmd.append(part_cmd[0])	# shift
+			part_cmd = part_cmd[1:]
+		return first_part_cmd, '', list()
+
+	def skip_brackets(self, part_cmd):
+		'Ignore everything inside brackets'
+		bracket_cnt = 0
+		while True:
+			element, part_cmd = self.get_next(part_cmd)
+			if element == ')' and bracket_cnt == 0:
+				return part_cmd
+			if element == '(':
+				bracket_cnt += 1
+			elif element == '}':
+				bracket_cnt -= 1
+
+	def get_list(self, part_cmd):
+		'Get comma seperated list, take only the first elements behind the comma'
+		elements = list()
+		matching = ','
+		while part_cmd != list():
+			element, part_cmd = self.get_next(part_cmd)
+			if not element:
+				return elements, part_cmd
+			if matching in '),' and not element.upper() in self.sqldump.SQL_COMMANDS:
+				elements.append(element)
+			first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(', ')', ',')
+			if matching == '(':
+				part_cmd = self.skip_brackets(part_cmd)
+			elif not matching or matching == ')':
+				return elements, part_cmd
+
+	def fetchall(self, logger):
+		'Fetch all tables'
+		for cmd in self.sqldump.read_cmds():
+			main_cmd, part_cmd = self.get_next_upper(cmd)
+			print(part_cmd)
+			if main_cmd == 'CREATE':	# CREATE TABLE
+				element, part_cmd = self.get_next_upper(part_cmd)
+				if element != 'TABLE':
+					continue
+				first_part_cmd, matching, part_cmd = self.seek_strings(cmd[1:], '(')
+				if not matching:	# skip if no definitions in ()
+					continue
+				table_name = first_part_cmd[-1]
+				column_names, part_cmd = self.get_list(part_cmd)
+				print('>>>', main_cmd, table_name, column_names, part_cmd)
+		return
 
 class SQLClient:
 	'Client for a running SQL Server'
@@ -209,6 +340,7 @@ class SQLClient:
 		self.name = database
 
 	def fetchall(self, logger):
+		'Fetch all tables'
 		cursor = self.db.cursor()
 		cursor.execute('SHOW tables;')
 		for table in cursor.fetchall():
@@ -229,6 +361,9 @@ class Worker:
 	def __init__(self, decoder, Writer, outdir=None, info=None):
 		'Parse'
 		logger = Logger(info=info)
+		decoder.fetchall(logger)
+		return	# DEBUG
+
 		#if outdir == None:
 		#	outdir = decoder.name
 		#try:
@@ -238,11 +373,11 @@ class Worker:
 		#		raise RuntimeError('Destination directory needs to be emtpy')
 		#chdir(outdir)
 		#logger.logfile_open()
-		for cmd in decoder.read_cmds():
-			print(cmd)
-		return
-		logger.put('Starting work, writing into directory ' + getcwd())
-		logger.put('Input method is ' + str(decoder))
+		#logger.put('Starting work, writing into directory ' + getcwd())
+		#logger.put('Input method is ' + str(decoder))
+		
+		
+		
 		thistable = None
 		for row in decoder.fetchall(logger):
 			if row == thistable:
@@ -296,7 +431,7 @@ if __name__ == '__main__':	# start here if called as application
 			database=args.database
 		)
 	else:
-		decoder = SQLDump(args.dumpfile)
+		decoder = SQLDecoder(args.dumpfile)
 	if args.csv:
 		Writer = Csv
 	else:
