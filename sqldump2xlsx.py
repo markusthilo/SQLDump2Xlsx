@@ -15,7 +15,8 @@ from datetime import datetime
 from re import sub, search, match
 from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
-from os import chdir, mkdir, getcwd, path, listdir
+from os import chdir, mkdir, getcwd, listdir
+from pathlib import Path
 from warnings import warn
 from sys import exit as sysexit
 from sys import stdout, stderr
@@ -31,9 +32,12 @@ class Logger:
 		self.orig_stderr_write = stderr.write
 		stderr.write = self.handler_stderr
 
-	def logfile_open(self):
+	def logfile_open(self, sourcefile=None):
 		'Create and open logfile with timestamp'
-		self.logfile = open(datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'), 'w')
+		if sourcefile == None:
+			self.logfile = open(datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt'), 'w')
+		else:
+			self.logfile = open(Path(sourcefile.name).stem + '_log.txt', 'w')
 
 	def put(self, msg):
 		'Put a message to stdout, info handler and/or logfile'
@@ -69,67 +73,28 @@ class Logger:
 		'Close logfile'
 		self.logfile.close()
 
-class Excel:
-	'Write to Excel File'
+class SQLClient:
+	'Client for a running SQL Server'
 
-	def __init__(self, table):
-		'Generate Excel file and writer'
-		self.tablename = table['tablename']
-		fname_no_ext = self.tablename
-		fcnt = 1
-		while path.exists(fname_no_ext + '.xlsx'):
-			fcnt += 1
-			fname_no_ext += f'_SAME_TABLE_{fcnt:04d}'
-		self.workbook = Workbook(fname_no_ext + '.xlsx',
-			{
-				'use_zip64': True,
-				'read_only_recommended': True
-			}
-		)
-		self.worksheet = self.workbook.add_worksheet(table['tablename'][:31])
-		self.bold = self.workbook.add_format({'bold': True})
-		for col in range(len(table['colnames'])):
-			self.worksheet.write(0, col, table['colnames'][col], self.bold)
-		self.__row_cnt__ = 1
-
-	def append(self, row):
-		'Append one row to Excel worksheet'
-		for col_cnt in range(len(row)):
-			if isinstance(row[col_cnt], bytes):
-				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt].decode())
-			elif isinstance(row[col_cnt], datetime):
-				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt].strftime('%Y-%m-%d_%H:%M:%S.%f'))
-			if isinstance(row[col_cnt], str) or isinstance(row[col_cnt], int) or isinstance(row[col_cnt], float):
-				self.worksheet.write(self.__row_cnt__, col_cnt, row[col_cnt])
-			else:
-				self.worksheet.write(self.__row_cnt__, col_cnt, str(row[col_cnt]))
-		self.__row_cnt__ += 1
+	def __init__(self, host='localhost', user='root', password='root', database='test'):
+		'Generate client to a given database'
+		self.db = Mysql.connect(host=host, user=user, password=password, database=database)
+		self.name = database
 
 	def close(self):
-		'Close file = write Excel file'
-		self.workbook.close()
+		self.db.close()
 
-class Csv:
-	'Write to CSV files'
-
-	def __init__(self, table):
-		'Generate CSV file and writer'
-		self.tablename = table['tablename']
-		filename = table['tablename'] + '.csv'
-		if path.exists(filename):
-			self.csvfile = open(filename, 'a', encoding='utf-8', newline='')
-		else:
-			self.csvfile = open(filename, 'w', encoding='utf-8', newline='')
-		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
-		self.writer.writerow(table['colnames'])
-
-	def append(self, row):
-		'Append one row to CSV file'
-		self.writer.writerow(row)
-
-	def close(self):
-		'Close file'
-		self.csvfile.close()
+	def fetchall(self, logger):
+		'Fetch all tables'
+		cursor = self.db.cursor()
+		cursor.execute('SHOW tables;')
+		for table in cursor.fetchall():
+			logger.put('Executing SELECT * FROM ' + table[0])
+			cursor.execute(f'SELECT * FROM {table[0]};')
+			rows = cursor.fetchall()
+			yield {'tablename': table[0], 'colnames': cursor.column_names}
+			for row in rows:
+				yield row
 
 class SQLDump:
 	'Handle dump file'
@@ -179,6 +144,11 @@ class SQLDump:
 	def __init__(self, dumpfile):
 		'Create object for one sql dump file'
 		self.dumpfile = dumpfile
+		self.name = dumpfile.name
+
+	def close(self):
+		'Close SQL dump file'
+		self.dumpfile.close()
 
 	def get_char(self, line):
 		'Fetch the next character'
@@ -251,9 +221,10 @@ class SQLDump:
 class SQLDecoder:
 	'Decode SQL dump to SQLite compatible commands'
 
-	def __init__(self, dumpfile):
-		'Generate naked Object'
+	def __init__(self, dumpfile, sqlite=None):
+		'Generate decoder for SQL dump file'
 		self.sqldump = SQLDump(dumpfile)
+		self.sqlite = sqlite
 
 	def get_next(self, part_cmd):
 		'Get next element'
@@ -314,70 +285,166 @@ class SQLDecoder:
 			elif not matching or matching == ')':
 				return elements, part_cmd
 
-	def fetchall(self, logger):
+	def el2str(self, elements):
+		'Generate string from elements'
+		return ' ' + ' '.join(elements)
+
+	def list2str(self, in_brackets):
+		'Generate string with brackets from a list of elements'
+		return ' (' + ', '.join(in_brackets) + ')'
+
+	def transall(self, logger):
 		'Fetch all tables'
-		for cmd in self.sqldump.read_cmds():
-			main_cmd, part_cmd = self.get_next_upper(cmd)
-			print(part_cmd)
-			if main_cmd == 'CREATE':	# CREATE TABLE
+		for raw_cmd in self.sqldump.read_cmds():
+			cmd_str, part_cmd = self.get_next_upper(raw_cmd)
+			if cmd_str == 'CREATE':	# CREATE TABLE
 				element, part_cmd = self.get_next_upper(part_cmd)
 				if element != 'TABLE':
 					continue
-				first_part_cmd, matching, part_cmd = self.seek_strings(cmd[1:], '(')
+				cmd_str += ' TABLE'
+				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 				if not matching:	# skip if no definitions in ()
 					continue
-				table_name = first_part_cmd[-1]
-				column_names, part_cmd = self.get_list(part_cmd)
-				print('>>>', main_cmd, table_name, column_names, part_cmd)
-		return
+				cmd_str += self.el2str(first_part_cmd)
+				in_brackets, part_cmd = self.get_list(part_cmd)
+				if in_brackets == list():
+					continue
+				cmd_str += self.list2str(in_brackets)
+			elif cmd_str == 'INSERT':	# INSERT INTO
+				element, part_cmd = self.get_next_upper(part_cmd)
+				if element != 'INTO':
+					continue
+				cmd_str += ' INTO'
+				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(', 'VALUES')
+				if not matching:	# skip if no nothing to insert
+					continue
+				if matching == '(':
+					in_brackets, part_cmd = self.get_list(part_cmd)
+					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
+					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
+				cmd_str += self.el2str(first_part_cmd) + ' VALUES\n'
+				while part_cmd != list():
+					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
+					if not matching:	# skip if no values
+						continue
+					in_brackets, part_cmd = self.get_list(part_cmd)
+					cmd_str += self.list2str(in_brackets)
+					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
+					if matching == ',' :
+						cmd_str += ',\n'
+			else:
+				continue
+			yield cmd_str + ';'
 
-class SQLClient:
-	'Client for a running SQL Server'
-
-	def __init__(self, host='localhost', user='root', password='root', database='test'):
-		'Generate client to a given database'
-		self.db = Mysql.connect(host=host, user=user, password=password, database=database)
-		self.name = database
+	def show_tables(self, cursor):
+		'Execute SHOW tables; in SQLite way'
+		
 
 	def fetchall(self, logger):
 		'Fetch all tables'
+		if self.sqlite == None:
+			fname = Path(self.sqldump.name).stem + '.db'
+			if Path(fname).exists():
+				raise RuntimeError(f'File {fname} exists')
+			self.db = Sqlite(fname)
+		else:
+			self.db = Sqlite(sqlite)
 		cursor = self.db.cursor()
-		cursor.execute('SHOW tables;')
+		for cmd in self.transall(logger):
+			cursor.execute(cmd)
+		self.db.commit()
+		cursor.execute("SELECT name FROM sqlite_schema WHERE type = 'table';")
 		for table in cursor.fetchall():
 			logger.put('Executing SELECT * FROM ' + table[0])
 			cursor.execute(f'SELECT * FROM {table[0]};')
 			rows = cursor.fetchall()
-			yield {'tablename': table[0], 'colnames': cursor.column_names}
+			yield {'tablename': table[0], 'colnames': list(map(lambda des: des[0], cursor.description))}
 			for row in rows:
 				yield row
 
+class Excel:
+	'Write to Excel File'
+
+	def __init__(self, table, maxwidth=255, maxtnamewidth=31):
+		'Generate Excel file and writer'
+		self.tablename = table['tablename']
+		self.maxwidth = maxwidth
+		self.workbook = Workbook(self.tablename + '.xlsx',
+			{
+				'use_zip64': True,
+				'read_only_recommended': True
+			}
+		)
+		self.worksheet = self.workbook.add_worksheet(table['tablename'][:maxtnamewidth])
+		self.bold = self.workbook.add_format({'bold': True})
+		for col in range(len(table['colnames'])):
+			self.worksheet.write(0, col, table['colnames'][col], self.bold)
+		self._row_cnt = 1
+
+	def append(self, row):
+		'Append one row to Excel worksheet'
+		for col_cnt in range(len(row)):
+			if self.maxwidth != 0 and isinstance(row[col_cnt], str):
+				field = row[col_cnt][:self.maxwidth]
+			else:
+				field = row[col_cnt]
+			self.worksheet.write(self._row_cnt, col_cnt, row[col_cnt])
+		self._row_cnt += 1
+
 	def close(self):
-		'Dummy'
-		pass
+		'Close file = write Excel file'
+		self.workbook.close()
 
-class Worker:
-	'Main loop to work table by table'
+class Csv:
+	'Write to CSV files'
 
-	def __init__(self, decoder, Writer, outdir=None, info=None):
+	def __init__(self, table):
+		'Generate CSV file and writer'
+		self.tablename = table['tablename']
+		filename = table['tablename'] + '.csv'
+		self.csvfile = open(filename, 'w', encoding='utf-8', newline='')
+		self.writer = csvwriter(self.csvfile, dialect='excel', delimiter='\t')
+		self.writer.writerow(table['colnames'])
+
+	def append(self, row):
+		'Append one row to CSV file'
+		self.writer.writerow(row)
+
+	def close(self):
+		'Close file'
+		self.csvfile.close()
+
+class Main:
+	'Main object'
+
+	def __init__(self, decoder, Writer,
+		outdir = None,
+		maxfield = 256,
+		logfile = None,
+		translate = None,
+		info = None	
+	):
 		'Parse'
-		logger = Logger(info=info)
-		decoder.fetchall(logger)
-		return	# DEBUG
+		logger = Logger(info=info, logfile=logfile)
+		if translate != None:	# do nothing but translate to sqlite compatibility
+			if logfile == None:
+				logger.logfile_open(sourcefile=translate)
+			for sqlite_cmd in decoder.transall(logger):
+				print(sqlite_cmd, file=translate)
+				transfile.close()
+			return
+		if outdir == None:
+			outdir = decoder.name
+		try:
+			mkdir(outdir)
+		except FileExistsError:
+			if listdir(outdir):
+				raise RuntimeError('Destination directory needs to be emtpy')
+		chdir(outdir)
+		logger.logfile_open()
+		logger.put('Starting work, writing into directory ' + getcwd())
+		logger.put('Input method is ' + str(decoder))
 
-		#if outdir == None:
-		#	outdir = decoder.name
-		#try:
-		#	mkdir(outdir)
-		#except FileExistsError:
-		#	if listdir(outdir):
-		#		raise RuntimeError('Destination directory needs to be emtpy')
-		#chdir(outdir)
-		#logger.logfile_open()
-		#logger.put('Starting work, writing into directory ' + getcwd())
-		#logger.put('Input method is ' + str(decoder))
-		
-		
-		
 		thistable = None
 		for row in decoder.fetchall(logger):
 			if row == thistable:
@@ -401,23 +468,38 @@ class Worker:
 
 if __name__ == '__main__':	# start here if called as application
 	argparser = ArgumentParser(description=__description__)
-	argparser.add_argument('-c', '--csv', action='store_true',
-		help='Generate CSV files, not Excel'
-	)
-	argparser.add_argument('-d', '--database', type=str, default='test',
-		help='Name of database to connect (default: test)', metavar='STRING'
-	)
 	argparser.add_argument('-o', '--outdir', type=str,
 		help='Directory to write generated files (default: current)', metavar='DIRECTORY'
 	)
-	argparser.add_argument('-p', '--password', type=str, default='root',
-		help='Username to connect to a SQL server (default: root)', metavar='STRING'
+	argparser.add_argument('-q', '--sqlite', type=FileType('w', encoding='utf8'),
+		help='SQLite database file to write when source is SQL dump file', metavar='FILE'
 	)
 	argparser.add_argument('-s', '--host', type=str, default='localhost',
 		help='Hostname to connect to a SQL server (default: localhost)', metavar='STRING'
 	)
+	argparser.add_argument('-d', '--database', type=str, default='test',
+		help='Name of database to connect (default: test)', metavar='STRING'
+	)
 	argparser.add_argument('-u', '--user', type=str, default='root',
 		help='Username to connect to a SQL server (default: root)', metavar='STRING'
+	)
+	argparser.add_argument('-p', '--password', type=str, default='root',
+		help='Username to connect to a SQL server (default: root)', metavar='STRING'
+	)
+	argparser.add_argument('-m', '--max', type=int, default=255,
+		help='Set maximum field size while reading (0 = no limit, defailt: 255)', metavar='INTEGER'
+	)
+	argparser.add_argument('-l', '--log', type=FileType('w', encoding='utf8'),
+		help='Set logfile (default: *_log.txt in destination directory)', metavar='FILE'
+	)
+	argparser.add_argument('-t', '--translate', type=FileType('w', encoding='utf8'),
+		help='Translate SQL dump file to SQLite compatibility (no Excel etc.)', metavar='FILE'
+	)
+	argparser.add_argument('-c', '--csv', action='store_true',
+		help='Generate CSV files, not Excel'
+	)
+	argparser.add_argument('-x', '--noxlsx', action='store_true',
+		help='Do not generate Excel or CSV when source is SQL dump file'
 	)
 	argparser.add_argument('dumpfile', nargs='?', type=FileType('rt', encoding='utf8'),
 		help='SQL dump file to read (if none: try to connect  a server)', metavar='FILE'
@@ -431,10 +513,18 @@ if __name__ == '__main__':	# start here if called as application
 			database=args.database
 		)
 	else:
-		decoder = SQLDecoder(args.dumpfile)
-	if args.csv:
-		Writer = Csv
+		decoder = SQLDecoder(args.dumpfile, sqlite=args.sqlite)
+	if args.translate != None or args.noxlsx:
+		Writer = None
 	else:
-		Writer = Excel
-	Worker(decoder, Writer, outdir=args.outdir)
+		if args.csv:
+			Writer = Csv
+		else:
+			Writer = Excel
+	Main(decoder, Writer,
+		outdir = args.outdir,
+		maxfield = args.max,
+		logfile = args.log, 
+		translate = args.translate,		
+	)
 	sysexit(0)
