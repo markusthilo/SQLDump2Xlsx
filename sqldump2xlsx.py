@@ -106,6 +106,7 @@ class SQLDump:
 		'BETWEEN',
 		'BY',
 		'COMMIT',
+		'CONSTRAINT',
 		'CREATE',
 		'DATABASE',
 		'DELETE',
@@ -113,6 +114,7 @@ class SQLDump:
 		'DROP',
 		'EXISTS',
 		'FULL',
+		'FOREIGN',
 		'GRANT',
 		'GROUP',
 		'HAVING',
@@ -122,11 +124,13 @@ class SQLDump:
 		'INSERT',
 		'INTO',
 		'JOIN',
+		'KEY',
 		'LEFT',
 		'LIKE',
 		'OR',
 		'ORDER',
 		'PRIMARY',
+		'REFERENCES',
 		'REVOKE',
 		'RIGHT',
 		'ROLLBACK',
@@ -221,6 +225,8 @@ class SQLDump:
 class SQLDecoder:
 	'Decode SQL dump to SQLite compatible commands'
 
+	SQLITE_LIMIT = 1000	# maximum lines/values for one command
+
 	def __init__(self, dumpfile, sqlite=None):
 		'Generate decoder for SQL dump file'
 		self.sqldump = SQLDump(dumpfile)
@@ -260,14 +266,15 @@ class SQLDecoder:
 	def skip_brackets(self, part_cmd):
 		'Ignore everything inside brackets'
 		bracket_cnt = 0
-		while True:
+		while part_cmd != list():
 			element, part_cmd = self.get_next(part_cmd)
 			if element == ')' and bracket_cnt == 0:
 				return part_cmd
 			if element == '(':
 				bracket_cnt += 1
-			elif element == '}':
+			elif element == ')':
 				bracket_cnt -= 1
+		return list()
 
 	def get_list(self, part_cmd):
 		'Get comma seperated list, take only the first elements behind the comma'
@@ -291,7 +298,7 @@ class SQLDecoder:
 
 	def list2str(self, in_brackets):
 		'Generate string with brackets from a list of elements'
-		return ' (' + ', '.join(in_brackets) + ')'
+		return '  (' + ', '.join(in_brackets) + ')'
 
 	def transall(self, logger):
 		'Fetch all tables'
@@ -323,22 +330,28 @@ class SQLDecoder:
 					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
 				cmd_str += self.el2str(first_part_cmd) + ' VALUES\n'
+				val_cnt = 0	# limit rows at once to be shure that sqlite3 can process
+				val_str = ''
 				while part_cmd != list():
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 					if not matching:	# skip if no values
 						continue
 					in_brackets, part_cmd = self.get_list(part_cmd)
-					cmd_str += self.list2str(in_brackets)
+					val_str += self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
 					if matching == ',' :
-						cmd_str += ',\n'
+						if val_cnt == self.SQLITE_LIMIT:
+							yield cmd_str + val_str + ';'
+							val_cnt = 0
+							val_str = ''
+						else:
+							val_cnt += 1
+							val_str += ',\n'
+
+				cmd_str += val_str
 			else:
 				continue
 			yield cmd_str + ';'
-
-	def show_tables(self, cursor):
-		'Execute SHOW tables; in SQLite way'
-		
 
 	def fetchall(self, logger):
 		'Fetch all tables'
@@ -351,6 +364,7 @@ class SQLDecoder:
 			self.db = Sqlite(sqlite)
 		cursor = self.db.cursor()
 		for cmd in self.transall(logger):
+			print(cmd)
 			cursor.execute(cmd)
 		self.db.commit()
 		cursor.execute("SELECT name FROM sqlite_schema WHERE type = 'table';")
@@ -431,7 +445,7 @@ class Main:
 				logger.logfile_open(sourcefile=translate)
 			for sqlite_cmd in decoder.transall(logger):
 				print(sqlite_cmd, file=translate)
-				transfile.close()
+			translate.close()
 			return
 		if outdir == None:
 			outdir = decoder.name
@@ -444,7 +458,6 @@ class Main:
 		logger.logfile_open()
 		logger.put('Starting work, writing into directory ' + getcwd())
 		logger.put('Input method is ' + str(decoder))
-
 		thistable = None
 		for row in decoder.fetchall(logger):
 			if row == thistable:
