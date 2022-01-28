@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-01-24'
+__version__ = '0.3_2022-01-28'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -82,6 +82,7 @@ class SQLClient:
 		self.name = database
 
 	def close(self):
+		'Close connection to database'
 		self.db.close()
 
 	def fetchall(self, logger):
@@ -225,8 +226,6 @@ class SQLDump:
 class SQLDecoder:
 	'Decode SQL dump to SQLite compatible commands'
 
-	SQLITE_LIMIT = 1000	# maximum lines/values for one command
-
 	def __init__(self, dumpfile, sqlite=None):
 		'Generate decoder for SQL dump file'
 		self.sqldump = SQLDump(dumpfile)
@@ -298,7 +297,7 @@ class SQLDecoder:
 
 	def list2str(self, in_brackets):
 		'Generate string with brackets from a list of elements'
-		return '  (' + ', '.join(in_brackets) + ')'
+		return ' (' + ', '.join(in_brackets) + ')'
 
 	def transall(self, logger):
 		'Fetch all tables'
@@ -329,7 +328,7 @@ class SQLDecoder:
 					in_brackets, part_cmd = self.get_list(part_cmd)
 					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
-				cmd_str += self.el2str(first_part_cmd) + ' VALUES\n'
+				cmd_str += self.el2str(first_part_cmd) + 'VALUES'
 				val_cnt = 0	# limit rows at once to be shure that sqlite3 can process
 				val_str = ''
 				while part_cmd != list():
@@ -337,16 +336,10 @@ class SQLDecoder:
 					if not matching:	# skip if no values
 						continue
 					in_brackets, part_cmd = self.get_list(part_cmd)
-					val_str += self.list2str(in_brackets)
+					val_str = self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
 					if matching == ',' :
-						if val_cnt == self.SQLITE_LIMIT:
 							yield cmd_str + val_str + ';'
-							val_cnt = 0
-							val_str = ''
-						else:
-							val_cnt += 1
-							val_str += ',\n'
 
 				cmd_str += val_str
 			else:
@@ -375,6 +368,10 @@ class SQLDecoder:
 			yield {'tablename': table[0], 'colnames': list(map(lambda des: des[0], cursor.description))}
 			for row in rows:
 				yield row
+
+	def close(self):
+		'Close SQLite database'
+		self.db.close()
 
 class Excel:
 	'Write to Excel File'
