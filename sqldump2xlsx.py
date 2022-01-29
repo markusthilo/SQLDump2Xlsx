@@ -141,14 +141,16 @@ class SQLDump:
 		'TOP',
 		'TRUNCATE',
 		'UNION',
+		'UNIQUE',
 		'UPDATE',
 		'VIEW',
 		'WHERE'
 	)
 
-	def __init__(self, dumpfile):
+	def __init__(self, dumpfile, maxfieldsize=255):
 		'Create object for one sql dump file'
 		self.dumpfile = dumpfile
+		self.maxfieldsize = maxfieldsize
 		self.name = dumpfile.name
 
 	def close(self):
@@ -158,39 +160,42 @@ class SQLDump:
 	def get_char(self, line):
 		'Fetch the next character'
 		if not line:
-			return '', line
+			return '', ''
 		return line[0], line[1:]
 
 	def get_word(self, line):
 		'Get one word'
 		word = ''
-		while True:
+		while line:
 			char, line = self.get_char(line)
 			if char == None or char in ' \t,;()"\'\n':
-				return word, char, line
+				break
 			word += char
+		return word, char, line
 
 	def fetch_quotes(self, quote, line):
 		'Fetch everything inside quotes'
 		text = ''
-		while True:
+		while line:
 			char, line = self.get_char(line)
 			if not char:	# read next line if line is empty
 				line = self.dumpfile.readline()
 				if not line:	# eof
-					return text, line
+					break
 				text += '\\n'	# generate newline char
 				continue
 			if char == '\\':	# get next char when escaped
-				text += char
-				char, line = self.get_char(line)
-				if char == None:
+				nextchar, line = self.get_char(line)
+				if nextchar == None:
 					continue
-				text += char
+				text += char + nextchar
 				continue
 			if char == quote:
-				return text, line
+				break
 			text += char
+		if self.maxfieldsize == 0:
+			return text, line
+		return text[:self.maxfieldsize], line
 
 	def read_cmds(self):
 		'Line by line'
@@ -226,9 +231,9 @@ class SQLDump:
 class SQLDecoder:
 	'Decode SQL dump to SQLite compatible commands'
 
-	def __init__(self, dumpfile, sqlite=None):
+	def __init__(self, dumpfile, sqlite=None, maxfieldsize=255):
 		'Generate decoder for SQL dump file'
-		self.sqldump = SQLDump(dumpfile)
+		self.sqldump = SQLDump(dumpfile, maxfieldsize=maxfieldsize)
 		self.sqlite = sqlite
 
 	def get_next(self, part_cmd):
@@ -299,6 +304,14 @@ class SQLDecoder:
 		'Generate string with brackets from a list of elements'
 		return ' (' + ', '.join(in_brackets) + ')'
 
+	def list2qmarks(self, in_brackets):
+		'Generate string linke (?, ?, ?) from a list of elements'
+		return ' (' + '?, ' * (len(in_brackets) - 1) + '?)'
+
+	def unbracket(self, in_brackets):
+		'Remove brackets from strings in an iterable'
+		return [ string.strip('\'"`') for string in in_brackets ]
+
 	def transall(self, logger):
 		'Fetch all tables'
 		for raw_cmd in self.sqldump.read_cmds():
@@ -316,7 +329,9 @@ class SQLDecoder:
 				if in_brackets == list():
 					continue
 				cmd_str += self.list2str(in_brackets)
-			elif cmd_str == 'INSERT':	# INSERT INTO
+				yield cmd_str + ';', ()
+				continue
+			if cmd_str == 'INSERT':	# INSERT INTO
 				element, part_cmd = self.get_next_upper(part_cmd)
 				if element != 'INTO':
 					continue
@@ -328,23 +343,17 @@ class SQLDecoder:
 					in_brackets, part_cmd = self.get_list(part_cmd)
 					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
-				cmd_str += self.el2str(first_part_cmd) + 'VALUES'
-				val_cnt = 0	# limit rows at once to be shure that sqlite3 can process
-				val_str = ''
-				while part_cmd != list():
+				base_str = cmd_str + self.el2str(first_part_cmd) + ' VALUES'
+				while part_cmd != list():	# one command per value/row
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 					if not matching:	# skip if no values
 						continue
 					in_brackets, part_cmd = self.get_list(part_cmd)
-					val_str = self.list2str(in_brackets)
+					cmd_str = base_str + self.list2qmarks(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
-					if matching == ',' :
-							yield cmd_str + val_str + ';'
-
-				cmd_str += val_str
-			else:
-				continue
-			yield cmd_str + ';'
+					yield cmd_str + ';', self.unbracket(in_brackets)
+					if matching == ';' :
+						break
 
 	def fetchall(self, logger):
 		'Fetch all tables'
@@ -356,9 +365,8 @@ class SQLDecoder:
 		else:
 			self.db = Sqlite(sqlite)
 		cursor = self.db.cursor()
-		for cmd in self.transall(logger):
-			print(cmd)
-			cursor.execute(cmd)
+		for cmd_str, values in self.transall(logger):
+			cursor.execute(cmd_str, values)
 		self.db.commit()
 		cursor.execute("SELECT name FROM sqlite_schema WHERE type = 'table';")
 		for table in cursor.fetchall():
@@ -430,7 +438,6 @@ class Main:
 
 	def __init__(self, decoder, Writer,
 		outdir = None,
-		maxfield = 256,
 		logfile = None,
 		translate = None,
 		info = None	
@@ -523,7 +530,7 @@ if __name__ == '__main__':	# start here if called as application
 			database=args.database
 		)
 	else:
-		decoder = SQLDecoder(args.dumpfile, sqlite=args.sqlite)
+		decoder = SQLDecoder(args.dumpfile, sqlite=args.sqlite, maxfieldsize=args.max)
 	if args.translate != None or args.noxlsx:
 		Writer = None
 	else:
@@ -533,7 +540,6 @@ if __name__ == '__main__':	# start here if called as application
 			Writer = Excel
 	Main(decoder, Writer,
 		outdir = args.outdir,
-		maxfield = args.max,
 		logfile = args.log, 
 		translate = args.translate,		
 	)
