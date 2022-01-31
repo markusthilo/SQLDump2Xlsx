@@ -108,12 +108,14 @@ class SQLDump:
 		'BY',
 		'COMMIT',
 		'CONSTRAINT',
+		'COPY',
 		'CREATE',
 		'DATABASE',
 		'DELETE',
 		'DISTINCT',
 		'DROP',
 		'EXISTS',
+		'FROM',
 		'FULL',
 		'FOREIGN',
 		'GRANT',
@@ -128,6 +130,8 @@ class SQLDump:
 		'KEY',
 		'LEFT',
 		'LIKE',
+		'LOCK',
+		'NOT',
 		'OR',
 		'ORDER',
 		'PRIMARY',
@@ -137,11 +141,14 @@ class SQLDump:
 		'ROLLBACK',
 		'SAVEPOINT',
 		'SELECT',
+		'SET',
 		'TABLE',
+		'TABLES',
 		'TOP',
 		'TRUNCATE',
 		'UNION',
 		'UNIQUE',
+		'UNLOCK',
 		'UPDATE',
 		'VIEW',
 		'WHERE'
@@ -206,6 +213,13 @@ class SQLDump:
 			if char == ';':	# give back whole comment on ;
 				yield cmd
 				cmd = list()
+			elif char == '\\':	# \.
+				char, line = self.get_char(line)
+				if char == '.':
+					yield cmd
+					cmd = list()
+				else:
+					cmd += '\\' + char
 			elif char in '(),':	# special chars
 				cmd.append(char)
 			elif char.isalnum():	# instruction or argument
@@ -328,8 +342,9 @@ class SQLDecoder:
 				in_brackets, part_cmd = self.get_list(part_cmd)
 				if in_brackets == list():
 					continue
-				cmd_str += self.list2str(in_brackets)
-				yield cmd_str + ';', ()
+				cmd_str += self.list2str(in_brackets) + ';'
+				logger.put('Generating table in SQLite DB by ' + cmd_str)
+				yield cmd_str, ()
 				continue
 			if cmd_str == 'INSERT':	# INSERT INTO
 				element, part_cmd = self.get_next_upper(part_cmd)
@@ -344,6 +359,7 @@ class SQLDecoder:
 					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
 				base_str = cmd_str + self.el2str(first_part_cmd) + ' VALUES'
+				logger.put('Putting data to SQLite DB by ' + base_str)
 				while part_cmd != list():	# one command per value/row
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 					if not matching:	# skip if no values
@@ -354,6 +370,31 @@ class SQLDecoder:
 					yield cmd_str + ';', self.unbracket(in_brackets)
 					if matching == ';' :
 						break
+					continue
+			print(raw_cmd)
+			if cmd_str == 'COPY':	# COPY FROM stdin
+				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
+				if not matching:	# skip if no nothing to insert
+					continue
+				in_brackets, part_cmd = self.get_list(part_cmd)
+				base_str += 'INSERT INTO' + self.el2str(first_part_cmd) + self.list2str(in_brackets)
+				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'FROM') + ' VALUES'
+				logger.put(f'Putting data to SQLite DB by {base_str} from original command {cmd_str}')
+				values = next(self.sqldump.read_cmds())
+				while values != list():	# read values
+					
+					while values != list():	# read one row of values
+						
+						first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '\\.', ';')
+						if not matching:	# skip if no values
+							continue
+						in_brackets, part_cmd = self.get_list(part_cmd)
+						cmd_str = base_str + self.list2qmarks(in_brackets)
+						first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
+						yield cmd_str + ';', self.unbracket(in_brackets)
+						if matching == ';' :
+							break
+						continue
 
 	def fetchall(self, logger):
 		'Fetch all tables'
@@ -370,7 +411,7 @@ class SQLDecoder:
 		self.db.commit()
 		cursor.execute("SELECT name FROM sqlite_schema WHERE type = 'table';")
 		for table in cursor.fetchall():
-			logger.put('Executing SELECT * FROM ' + table[0])
+			logger.put('Fetching data from SQLite DB by SELECT * FROM ' + table[0])
 			cursor.execute(f'SELECT * FROM {table[0]};')
 			rows = cursor.fetchall()
 			yield {'tablename': table[0], 'colnames': list(map(lambda des: des[0], cursor.description))}
@@ -439,18 +480,10 @@ class Main:
 	def __init__(self, decoder, Writer,
 		outdir = None,
 		logfile = None,
-		translate = None,
 		info = None	
 	):
 		'Parse'
 		logger = Logger(info=info, logfile=logfile)
-		if translate != None:	# do nothing but translate to sqlite compatibility
-			if logfile == None:
-				logger.logfile_open(sourcefile=translate)
-			for sqlite_cmd in decoder.transall(logger):
-				print(sqlite_cmd, file=translate)
-			translate.close()
-			return
 		if outdir == None:
 			outdir = decoder.name
 		try:
@@ -509,9 +542,6 @@ if __name__ == '__main__':	# start here if called as application
 	argparser.add_argument('-l', '--log', type=FileType('w', encoding='utf8'),
 		help='Set logfile (default: *_log.txt in destination directory)', metavar='FILE'
 	)
-	argparser.add_argument('-t', '--translate', type=FileType('w', encoding='utf8'),
-		help='Translate SQL dump file to SQLite compatibility (no Excel etc.)', metavar='FILE'
-	)
 	argparser.add_argument('-c', '--csv', action='store_true',
 		help='Generate CSV files, not Excel'
 	)
@@ -531,7 +561,7 @@ if __name__ == '__main__':	# start here if called as application
 		)
 	else:
 		decoder = SQLDecoder(args.dumpfile, sqlite=args.sqlite, maxfieldsize=args.max)
-	if args.translate != None or args.noxlsx:
+	if args.noxlsx:
 		Writer = None
 	else:
 		if args.csv:
@@ -540,7 +570,6 @@ if __name__ == '__main__':	# start here if called as application
 			Writer = Excel
 	Main(decoder, Writer,
 		outdir = args.outdir,
-		logfile = args.log, 
-		translate = args.translate,		
+		logfile = args.log, 	
 	)
 	sysexit(0)
