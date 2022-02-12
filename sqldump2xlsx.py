@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-01-28'
+__version__ = '0.3_2022-02-12'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -537,7 +537,7 @@ if __name__ == '__main__':	# start here if called as application
 		help='Username to connect to a SQL server (default: root)', metavar='STRING'
 	)
 	argparser.add_argument('-m', '--max', type=int, default=255,
-		help='Set maximum field size while reading (0 = no limit, defailt: 255)', metavar='INTEGER'
+		help='Set maximum field size (0 = no limit, defailt: 255)', metavar='INTEGER'
 	)
 	argparser.add_argument('-l', '--log', type=FileType('w', encoding='utf8'),
 		help='Set logfile (default: *_log.txt in destination directory)', metavar='FILE'

@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 python/ipflower.py $@
+python3 sqldump2xlsx.py $@
