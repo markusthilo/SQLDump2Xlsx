@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-02-12'
+__version__ = '0.3_2022-02-15'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -249,6 +249,7 @@ class SQLDecoder:
 		'Generate decoder for SQL dump file'
 		self.sqldump = SQLDump(dumpfile, maxfieldsize=maxfieldsize)
 		self.sqlite = sqlite
+		self.name = Path(str(dumpfile)).stem
 
 	def get_next(self, part_cmd):
 		'Get next element'
@@ -318,6 +319,10 @@ class SQLDecoder:
 		'Generate string with brackets from a list of elements'
 		return ' (' + ', '.join(in_brackets) + ')'
 
+	def list2quotes(self, in_brackets):
+		'Generate string with brackets from a list of elements'
+		return ' (`' + '`, `'.join(in_brackets) + '`)'
+
 	def list2qmarks(self, in_brackets):
 		'Generate string linke (?, ?, ?) from a list of elements'
 		return ' (' + '?, ' * (len(in_brackets) - 1) + '?)'
@@ -371,30 +376,19 @@ class SQLDecoder:
 					if matching == ';' :
 						break
 					continue
-			print(raw_cmd)
 			if cmd_str == 'COPY':	# COPY FROM stdin
 				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 				if not matching:	# skip if no nothing to insert
 					continue
 				in_brackets, part_cmd = self.get_list(part_cmd)
-				base_str += 'INSERT INTO' + self.el2str(first_part_cmd) + self.list2str(in_brackets)
-				first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'FROM') + ' VALUES'
+				base_str = f'INSERT INTO `{first_part_cmd[0]}`' + self.list2quotes(in_brackets)
 				logger.put(f'Putting data to SQLite DB by {base_str} from original command {cmd_str}')
 				values = next(self.sqldump.read_cmds())
-				while values != list():	# read values
-					
-					while values != list():	# read one row of values
-						
-						first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '\\.', ';')
-						if not matching:	# skip if no values
-							continue
-						in_brackets, part_cmd = self.get_list(part_cmd)
-						cmd_str = base_str + self.list2qmarks(in_brackets)
-						first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, ',', ';')
-						yield cmd_str + ';', self.unbracket(in_brackets)
-						if matching == ';' :
-							break
-						continue
+				set_len = len(in_brackets)
+				base_str += ' VALUES' + self.list2qmarks(in_brackets) + ';'
+				print(values)
+				for value_ptr in range(0, len(values), set_len):	# loop through values
+					yield base_str, values[value_ptr:value_ptr+set_len]
 
 	def fetchall(self, logger):
 		'Fetch all tables'
@@ -407,7 +401,14 @@ class SQLDecoder:
 			self.db = Sqlite(sqlite)
 		cursor = self.db.cursor()
 		for cmd_str, values in self.transall(logger):
-			cursor.execute(cmd_str, values)
+			try:
+				cursor.execute(cmd_str, values)
+			except:
+				logger.put('SQLite reported errors while executing '
+					+ cmd_str
+					+ ' with value(s) '
+					+ self.list2str(values)
+				)
 		self.db.commit()
 		cursor.execute("SELECT name FROM sqlite_schema WHERE type = 'table';")
 		for table in cursor.fetchall():
