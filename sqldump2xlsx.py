@@ -12,12 +12,10 @@ from mysql import connector as Mysql
 from sqlite3 import connect as SqliteConnect
 from xlsxwriter import Workbook
 from datetime import datetime
-from re import sub, search, match
 from csv import writer as csvwriter
 from argparse import ArgumentParser, FileType
-from os import chdir, mkdir, getcwd, listdir
 from pathlib import Path
-from warnings import warn
+
 from sys import exit as sysexit
 from sys import stdout, stderr
 
@@ -82,37 +80,38 @@ class Logger:
 class SQLClient:
 	'Client for a running SQL Server'
 
-	def __init__(self,
+	def __init__(self, logger,
 			host='localhost',
 			user='root',
 			password='root',
 			database='test'):
 		'Generate client to a given database'
+		self.logger = logger
 		self.db = Mysql.connect(host=host, user=user, password=password, database=database)
-		self.name = database
 
 	def close(self):
 		'Close connection to database'
 		self.db.close()
 
-	def fetchall(self, logger, sqlite):
+	def qmarks(self, elements):
+		'Questionmarks fpr SQLite'
+		return '?, ' * (len(elements) - 1) + '?'
+
+	def fetchall(self):
 		'Fetch all tables and put into SQLite db'
 		cursor = self.db.cursor()
 		cursor.execute('SHOW tables;')
-		for table in cursor.fetchall():
-			sqlite.execute(
-				f'CREATE TABLE `{table[0]}` (`'
-				+ '`, `'.join(cursor.column_names)
-				+ '`);'
-			)
-			logger.put('Executing SELECT * FROM ' + table[0])
-			cursor.execute(f'SELECT * FROM {table[0]};')
+		tables = cursor.fetchall()
+		for table in tables:
+			tname = f'`{table[0]}`'
+			cursor.execute(f'SELECT * FROM {tname};')
+			cols = [ e[0] for e in cursor.description ]
+			qmarks = self.qmarks(cols)
+			yield f'CREATE TABLE {tname} ({qmarks});', cols
+			self.logger.put(f'Working on TABLE {tname}')
 			for row in cursor.fetchall():
-				sqlite.execute(
-					f'INSERT INTO `{table[0]}` VALUES ('
-					+ '?, ' * (len(row) - 1) + '?);',
-					row
-				)
+				decoded = [ str(e) for e in row ]
+				yield f'INSERT INTO {tname} VALUES ({qmarks});', decoded
 
 class SQLite:
 	'Read and write SQLite file'
@@ -298,12 +297,11 @@ class SQLDump:
 class SQLDecoder:
 	'Decode SQL dump to SQLite compatible commands'
 
-	def __init__(self, logger, dumpfile, sqlite):
+	def __init__(self, logger, dumpfile):
 		'Generate decoder for SQL dump file'
 		self.logger = logger
 		self.name = dumpfile.stem
 		self.sqldump = SQLDump(dumpfile)
-		self.sqlite = sqlite
 
 	def close(self):
 		'Close SQL dump'
@@ -444,7 +442,6 @@ class SQLDecoder:
 				values = next(self.sqldump.read_cmds())
 				set_len = len(in_brackets)
 				base_str += ' VALUES' + self.list2qmarks(in_brackets) + ';'
-				print(values)
 				for value_ptr in range(0, len(values), set_len):	# loop through values
 					yield base_str, values[value_ptr:value_ptr+set_len]
 
@@ -581,7 +578,7 @@ class Worker:
 			if self.sqlitefile == None:
 				self.sqlitefile = self.outdir / ( dumpfile.stem + '.db' )
 			self.mk_sqlite()
-			self.sqldecoder = SQLDecoder(self.logger, dumpfile, self.sqlite)
+			self.sqldecoder = SQLDecoder(self.logger, dumpfile)
 			self.sqlite.fill(self.sqldecoder.transall)
 			self.write()
 			self.sqldecoder.close()
@@ -590,16 +587,21 @@ class Worker:
 
 	def fromserver(self, host=None, user=None, password=None, database=None):
 		'Fetch from SQL server'
-		sqlclient = SQLClient(host=host, user=user, password=password, database=database)
 		if self.outdir == None:
 			self.outdir = Path() / database
 		self.mk_outdir()
 		if self.sqlitefile == None:
 			self.sqlitefile = self.outdir / ( database + '.db' )
 		self.mk_sqlite()
-		self.sqlite.fill(self.sqlclient.transall)
+		sqlclient = SQLClient(self.logger,
+			host = host,
+			user = user,
+			password = password,
+			database = database
+		)
+		self.sqlite.fill(sqlclient.fetchall)
 		self.write()
-		self.sqlclient.close()
+		sqlclient.close()
 		self.logger.put(f'All done fetching from SQL server')
 		self.logger.close()
 
