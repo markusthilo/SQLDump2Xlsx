@@ -8,7 +8,7 @@ __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
 __description__ = 'GUI for sqldump2xlsx.py on Windows'
 
-from tkinter import Tk, StringVar, PhotoImage, E, W, END, RIGHT
+from tkinter import Tk, StringVar, IntVar, PhotoImage, E, W, END, RIGHT
 from tkinter.ttk import Label, Button, Notebook, Frame
 from tkinter.ttk import LabelFrame, Entry, Radiobutton
 from tkinter.filedialog import askopenfilename, askdirectory
@@ -46,7 +46,6 @@ class Main(Tk):
 			).grid(column=0, row=0, sticky=W, padx=10, pady=10)
 		Entry(self.frame_file, textvariable=self.filename, width=112).grid(
 			column=0, row=1, columnspan=2, padx=10, pady=10)
-
 		Button(self.frame_file,
 			text = 'Parse',
 			command = lambda: self.parse('file')
@@ -63,10 +62,13 @@ class Main(Tk):
 			text = 'Parse',
 			command = lambda: self.parse('server')
 			).grid(column=1, row=4, sticky=E, padx=10, pady=10)
+		### Options ###
+		self.frame_options = Frame(self)
+		self.frame_options.pack(fill='both', expand=True)
 		### Output file format ###
 		self.fileformat = StringVar(None, 'xlsx')
-		self.labelframe_fileformat = LabelFrame(self, text='Output file format')
-		self.labelframe_fileformat.pack(padx=10, pady=10, fill='x')
+		self.labelframe_fileformat = LabelFrame(self.frame_options, text='Output file format')
+		self.labelframe_fileformat.pack(padx=10, pady=10, side='left')
 		Radiobutton(self.labelframe_fileformat,
 			text = 'Xlsx',
 			value = 'xlsx',
@@ -77,6 +79,13 @@ class Main(Tk):
 			value = 'csv',
 			variable = self.fileformat
 		).pack(padx=10, pady=10, side='left')
+		### Maximum field size ###
+		self.maximum = IntVar()
+		self.maximum.set(255)
+		self.labelframe_maximum = LabelFrame(self.frame_options, text='Maximum field size')
+		self.labelframe_maximum.pack(padx=10, pady=10, side='left')
+		Entry(self.labelframe_maximum, textvariable=self.maximum, width=8).pack(padx=10, pady=10)
+
 		### Infos ###
 		self.labelframe_infos = LabelFrame(self, text='Infos')
 		self.labelframe_infos.pack(padx=10, pady=10, fill='x')
