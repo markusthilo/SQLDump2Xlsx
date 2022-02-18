@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-02-16'
+__version__ = '0.3_2022-02-18'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
-__description__ = 'Generate Excel files from SQL dump without relations'
+__description__ = 'Generate Excel files from SQL dump or SQLite database'
 
 from mysql import connector as Mysql
 from sqlite3 import connect as SqliteConnect
@@ -522,12 +522,13 @@ class Worker:
 		self.Writer = Writer
 		self.outdir = outdir
 		self.sqlitefile = sqlitefile
-		self.logger = Logger(logfile=logfile)
-		self.info = info
+		self.logger = Logger(logfile=logfile, info=info)
 		self.maxfieldsize = maxfieldsize
 
 	def write(self):
 		'Write to file with given class Witer'
+		if self.Writer == None:
+			return		
 		thistable = None
 		for row in self.sqlite.fetchall():
 			if row == thistable:
@@ -549,8 +550,10 @@ class Worker:
 		except:
 			raise RuntimeError('No files generated')
 
-	def mk_outdir(self):
-		'Make outdir and check if emty '
+	def mk_outdir(self, name):
+		'Make outdir and check if emty'
+		if self.outdir == None:
+			self.outdir = Path() / name
 		self.outdir.mkdir(parents=True, exist_ok=True)
 		if any(self.outdir.iterdir()):
 			raise RuntimeError('Destination directory needs to be emtpy')
@@ -558,26 +561,27 @@ class Worker:
 			self.logger.logfile_open(outdir=self.outdir)
 		self.logger.put('Writing into directory ' + str(self.outdir.resolve()))
 
-	def mk_sqlite(self):
+	def mk_sqlite(self, name):
 		'Make empty sSQLite file'
+		if self.sqlitefile == None:
+			if self.outdir == None:
+				self.sqlitefile = Path() / ( name + '.db' )
+			else:
+				self.sqlitefile = self.outdir / ( name + '.db' )
 		if self.sqlitefile.exists():
 			raise RuntimeError(f'File {str(self.sqlitefile.resolve())} exists')
 		self.sqlite = SQLite(self.logger, self.sqlitefile)
 
 	def fromfile(self, dumpfile):
 		'Fetch from SQL dump or SQLite db file'
-		if self.outdir == None:
-			self.outdir = Path() / dumpfile.stem
-		self.mk_outdir()
 		with open(dumpfile, 'rb') as dumpfh:	# dumpfile or sqlite db file?
 			self.is_sqlite = ( dumpfh.read(16) == b'SQLite format 3\x00' )
+		self.mk_outdir(dumpfile.stem)
 		if self.is_sqlite:
 			self.sqlite = SQLite(self.logger, dumpfile)
 			self.write()
 		else:
-			if self.sqlitefile == None:
-				self.sqlitefile = self.outdir / ( dumpfile.stem + '.db' )
-			self.mk_sqlite()
+			self.mk_sqlite(dumpfile.stem)
 			self.sqldecoder = SQLDecoder(self.logger, dumpfile)
 			self.sqlite.fill(self.sqldecoder.transall)
 			self.write()
@@ -587,12 +591,11 @@ class Worker:
 
 	def fromserver(self, host=None, user=None, password=None, database=None):
 		'Fetch from SQL server'
-		if self.outdir == None:
-			self.outdir = Path() / database
-		self.mk_outdir()
-		if self.sqlitefile == None:
-			self.sqlitefile = self.outdir / ( database + '.db' )
-		self.mk_sqlite()
+		if self.Writer != None:
+			self.mk_outdir(database)
+		else:
+			
+		self.mk_sqlite(database)
 		sqlclient = SQLClient(self.logger,
 			host = host,
 			user = user,
@@ -635,7 +638,7 @@ if __name__ == '__main__':	# start here if called as application
 		help='Generate CSV files, not Excel'
 	)
 	argparser.add_argument('-x', '--noxlsx', action='store_true',
-		help='Do not generate Excel or CSV when source is SQL dump file'
+		help='Do not generate Excel or CSV, SQLite only (useless if source is SQLite)'
 	)
 	argparser.add_argument('dumpfile', nargs='?', type=Path,
 		help='SQL dump file to read (if none: try to connect  a server)', metavar='FILE'

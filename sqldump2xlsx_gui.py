@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.2_2021-11-30'
+__version__ = '0.3_2022-02-18'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -11,13 +11,13 @@ __description__ = 'GUI for sqldump2xlsx.py on Windows'
 from tkinter import Tk, StringVar, IntVar, PhotoImage, E, W, END, RIGHT
 from tkinter.ttk import Label, Button, Notebook, Frame
 from tkinter.ttk import LabelFrame, Entry, Radiobutton
-from tkinter.filedialog import askopenfilename, askdirectory
+from tkinter.filedialog import askopenfilename, askdirectory, asksaveasfilename
 from tkinter.messagebox import showerror
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime
 from sys import stderr, stdout
-from os import listdir
-from sqldump2xlsx import *
+from pathlib import Path
+from sqldump2xlsx import Worker, Excel, Csv
 
 class Main(Tk):
 	'Main window'
@@ -33,17 +33,21 @@ class Main(Tk):
 		### File ###
 		self.frame_file = Frame(self.notebook)
 		self.frame_file.pack(fill='both', expand=True)
-		self.notebook.add(self.frame_file, text='File')
+		self.notebook.add(self.frame_file, text=' File ')
 		self.filename = StringVar()
 		Button(self.frame_file,
-			text = 'SQL dump file:',
+			text = 'SQL dump or SQLite file:',
 			command = lambda: self.filename.set(
 				askopenfilename(
-					title = 'Select SQL dump file',
-					filetypes = (("SQL files","*.sql"),("All files","*.*"))
+					title = 'Select source file',
+					filetypes = (
+						("SQL dump files","*.sql"),
+						("DB files","*.db"),
+						("All files","*.*")
 					)
 				)
-			).grid(column=0, row=0, sticky=W, padx=10, pady=10)
+			)
+		).grid(column=0, row=0, sticky=W, padx=10, pady=10)
 		Entry(self.frame_file, textvariable=self.filename, width=112).grid(
 			column=0, row=1, columnspan=2, padx=10, pady=10)
 		Button(self.frame_file,
@@ -53,7 +57,7 @@ class Main(Tk):
 		### Server ###
 		self.frame_server = Frame(self.notebook)
 		self.frame_server.pack(fill='both', expand=True)
-		self.notebook.add(self.frame_server, text='Server')
+		self.notebook.add(self.frame_server, text=' Server ')
 		self.host = self.server_field(0, 'Server:', 'localhost')
 		self.user = self.server_field(1, 'Username:', 'root')
 		self.password = self.server_field(2, 'Password:', 'root')
@@ -70,7 +74,7 @@ class Main(Tk):
 		self.labelframe_fileformat = LabelFrame(self.frame_options, text='Output file format')
 		self.labelframe_fileformat.pack(padx=10, pady=10, side='left')
 		Radiobutton(self.labelframe_fileformat,
-			text = 'Xlsx',
+			text = 'Excel',
 			value = 'xlsx',
 			variable = self.fileformat
 		).pack(padx=10, pady=10, side='left')
@@ -79,23 +83,30 @@ class Main(Tk):
 			value = 'csv',
 			variable = self.fileformat
 		).pack(padx=10, pady=10, side='left')
+		Radiobutton(self.labelframe_fileformat,
+			text = 'SQLite only',
+			value = 'sqlite',
+			variable = self.fileformat
+		).pack(padx=10, pady=10, side='left')
 		### Maximum field size ###
 		self.maximum = IntVar()
 		self.maximum.set(255)
-		self.labelframe_maximum = LabelFrame(self.frame_options, text='Maximum field size')
+		self.labelframe_maximum = LabelFrame(self.frame_options, text='Maximum field size (0 for no limit)')
 		self.labelframe_maximum.pack(padx=10, pady=10, side='left')
 		Entry(self.labelframe_maximum, textvariable=self.maximum, width=8).pack(padx=10, pady=10)
-
 		### Infos ###
 		self.labelframe_infos = LabelFrame(self, text='Infos')
 		self.labelframe_infos.pack(padx=10, pady=10, fill='x')
 		self.infos = ScrolledText(self.labelframe_infos, padx=10, pady=10, width=80, height=10)
 		self.infos.bind("<Key>", lambda e: "break")
 		self.infos.insert(END, 'Select SQL dump file or connect to server')
-		self.infos.pack(padx=10, pady=10)
+		self.infos.pack(padx=10, pady=10, side='left', fill='x')
 		### Quit button ###
-		Button(self,
-			text="Quit", command=self.destroy).pack(padx=10, pady=10, side=RIGHT)
+		self.frame_bottom = Frame(self)
+		self.frame_bottom.pack(padx=10, pady=10, side='right', fill='x')
+		
+		Button(self.frame_bottom,
+			text="Quit", command=self.destroy).pack()
 
 	def server_field(self, row, label, default):
 		'Field for parameters'
@@ -108,41 +119,58 @@ class Main(Tk):
 
 	def parse(self, source):
 		'Get destination'
-		if self.filename.get() == '' and source == 'file':
-			return
-		outdir = askdirectory(
-			title = 'Choose directory to write generatde file(s)',
-			mustexist=False
-		)
-		if listdir(outdir):
-			showerror('Error', 'Destination directory needs to be emtpy')
-			return
 		if source == 'file':
-			try:
-				dumpfile = open(self.filename.get(), 'rt')
-				decoder = SQLParser(dumpfile)
-			except:
-				showerror('Error', 'Could not open file\n' + self.filename.get())
+			sourcefile = Path(self.filename.get())
+			if not sourcefile.is_file():
+				showerror('Error', 'Source is not an existing file')
 				return
-		else:
-			try:
-				decoder = SQLClient(
-					host= self.host.get(),
-					user= self.user.get(),
-					password = self.password.get(),
-					database = self.database.get()
-				)
-			except:
-				showerror('Error', 'Could not connect to MySQL server')
-				return
-		if self.fileformat.get() == 'csv':
-			Writer = Csv
-		else:
-			Writer = Excel
+
 		self.infos.config(state='normal')
 		self.infos.delete(1.0, END)
 		self.infos.configure(state='disabled')
-		Worker(decoder, Writer, outdir=outdir, info=self.info_handler)
+		
+		if self.fileformat.get() == 'sqlite':
+			sqlitefile = Path(asksaveasfilename(
+				title = 'SQLite destination file'
+			))
+			worker = Worker(None,
+				sqlitefile = sqlitefile,
+				maxfieldsize = self.maximum.get(),
+				info = self.info_handler
+			)
+		else:
+			outdir = Path(askdirectory(
+				title = 'Choose or create a directory to write generatde file(s)',
+				mustexist=False
+			))
+			print(outdir)
+			if any(outdir.iterdir()):
+				showerror('Error', 'Destination directory needs to be emtpy')
+				return
+			if self.fileformat.get() == 'csv':
+				Writer = Csv
+			else:
+				Writer = Excel
+			worker = Worker(Writer,
+				outdir = outdir,
+				maxfieldsize = self.maximum.get(),
+				info=self.info_handler
+			)
+		if source == 'file':
+			worker.fromfile(Path(self.filename.get()))
+		else:
+			worker.fromserver(
+				host= self.host.get(),
+				user= self.user.get(),
+				password = self.password.get(),
+				database = self.database.get(),
+			)
+
+
+				#showerror('Error', 'Could not open file\n' + self.filename.get())
+
+				#showerror('Error', 'Could not connect to MySQL server')
+
 
 	def info_handler(self, msg):
 		'Use logging to show infos'
