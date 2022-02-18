@@ -93,25 +93,25 @@ class SQLClient:
 		'Close connection to database'
 		self.db.close()
 
-	def qmarks(self, elements):
-		'Questionmarks fpr SQLite'
-		return '?, ' * (len(elements) - 1) + '?'
-
 	def fetchall(self):
 		'Fetch all tables and put into SQLite db'
 		cursor = self.db.cursor()
 		cursor.execute('SHOW tables;')
 		tables = cursor.fetchall()
 		for table in tables:
-			tname = f'`{table[0]}`'
-			cursor.execute(f'SELECT * FROM {tname};')
-			cols = [ e[0] for e in cursor.description ]
-			qmarks = self.qmarks(cols)
-			yield f'CREATE TABLE {tname} ({qmarks});', cols
-			self.logger.put(f'Working on TABLE {tname}')
+			tablename = f'`{table[0]}`'
+			cursor.execute(f'SELECT * FROM {tablename};')
+			sqlite_cmd = f'CREATE TABLE {tablename} (`'
+			sqlite_cmd += '`, `'.join( e[0] for e in cursor.description )
+			sqlite_cmd += '`);'
+			self.logger.put(f'Executing in SQLite: {sqlite_cmd}')
+			yield sqlite_cmd, ()
+			self.logger.put(f'Filling {tablename}')
 			for row in cursor.fetchall():
-				decoded = [ str(e) for e in row ]
-				yield f'INSERT INTO {tname} VALUES ({qmarks});', decoded
+				sqlite_cmd = f'INSERT INTO {tablename} VALUES ('
+				sqlite_cmd += '?, ' * (len(row) - 1)
+				sqlite_cmd += '?);'
+				yield sqlite_cmd, tuple( str(e) for e in row )
 
 class SQLite:
 	'Read and write SQLite file'
@@ -420,7 +420,7 @@ class SQLDecoder:
 					cmd_str += self.el2str(first_part_cmd) + self.list2str(in_brackets)
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, 'VALUES')
 				base_str = cmd_str + self.el2str(first_part_cmd) + ' VALUES'
-				self.logger.put('Putting data to SQLite DB by ' + base_str)
+				self.logger.put('Filling SQLite db by ' + base_str + '...')
 				while part_cmd != list():	# one command per value/row
 					first_part_cmd, matching, part_cmd = self.seek_strings(part_cmd, '(')
 					if not matching:	# skip if no values
