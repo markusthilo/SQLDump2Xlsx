@@ -37,11 +37,11 @@ class Logger:
 		'Create and open logfile with timestamp'
 		if self.logfh != None:
 			self.close()
-		if logfile != None:
-			self.logfh = open(logfile, 'wt', encoding='utf8')
-		elif filename == None:
-			filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt')
-			self.logfh = open(outdir / filename, 'wt', encoding='utf8')
+		if logfile == None:
+			if filename == None:
+				filename = datetime.now().strftime('%Y-%m-%d_%H%M%S_log.txt')
+			logfile = outdir / filename
+		self.logfh = open(logfile, 'wt', encoding='utf8')
 
 	def put(self, msg):
 		'Put a message to stdout, info handler and/or logfile'
@@ -591,10 +591,12 @@ class Worker:
 
 	def fromserver(self, host=None, user=None, password=None, database=None):
 		'Fetch from SQL server'
-		if self.Writer != None:
+		if self.Writer != None or ( self.sqlitefile == None and self.outdir != None ):
 			self.mk_outdir(database)
-		else:
-			
+			if self.logger.logfh == None:
+				self.logger.logfile_open(outdir=self.outdir)
+		elif self.logger.logfh == None:
+			self.logger.logfile_open(filename=Path(database + '_log.txt'))
 		self.mk_sqlite(database)
 		sqlclient = SQLClient(self.logger,
 			host = host,
