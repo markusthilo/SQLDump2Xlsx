@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-02-19'
+__version__ = '0.3_2022-02-22'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -124,11 +124,9 @@ class Main(Tk):
 			if not sourcefile.is_file():
 				showerror('Error', 'Source is not an existing file')
 				return
-
 		self.infos.config(state='normal')
 		self.infos.delete(1.0, END)
 		self.infos.configure(state='disabled')
-		
 		if self.fileformat.get() == 'sqlite':
 			sqlitefile = Path(asksaveasfilename(
 				title = 'SQLite destination file'
@@ -143,7 +141,6 @@ class Main(Tk):
 				title = 'Choose or create a directory to write generatde file(s)',
 				mustexist=False
 			))
-			print(outdir)
 			if any(outdir.iterdir()):
 				showerror('Error', 'Destination directory needs to be emtpy')
 				return

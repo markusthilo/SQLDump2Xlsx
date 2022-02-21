@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Markus Thilo'
-__version__ = '0.3_2022-02-19'
+__version__ = '0.3_2022-02-22'
 __license__ = 'GPL-3'
 __email__ = 'markus.thilo@gmail.com'
 __status__ = 'Testing'
@@ -88,6 +88,7 @@ class SQLClient:
 		'Generate client to a given database'
 		self.logger = logger
 		self.db = Mysql.connect(host=host, user=user, password=password, database=database)
+
 
 	def close(self):
 		'Close connection to database'
@@ -467,12 +468,15 @@ class Excel:
 
 	def append(self, row):
 		'Append one row to Excel worksheet'
-		for col_cnt in range(len(row)):
-			if self.maxfieldsize > 0 and isinstance(row[col_cnt], str):
-				field = row[col_cnt][:self.maxfieldsize]
-			else:
-				field = row[col_cnt]
-			self.worksheet.write(self._row_cnt, col_cnt, row[col_cnt])
+		col_cnt = 0
+		if self.maxfieldsize > 0:
+			for col in row:
+				self.worksheet.write(self._row_cnt, col_cnt, col[:self.maxfieldsize])
+				col_cnt += 1
+		else:
+			for col in row:
+				self.worksheet.write(self._row_cnt, col_cnt, col)
+				col_cnt += 1
 		self._row_cnt += 1
 
 	def close(self):
@@ -494,13 +498,7 @@ class Csv:
 	def append(self, row):
 		'Append one row to CSV file'
 		if self.maxfieldsize > 0:
-			modrow = list()
-			for e in row:
-				if isinstance(e, str):
-					modrow.append(e[:255])
-				else:
-					modrow.append(e)
-			self.writer.writerow(modrow)
+			self.writer.writerow( col[:self.maxfieldsize] for col in row )
 		else:
 			self.writer.writerow(row)
 
@@ -552,14 +550,23 @@ class Worker:
 
 	def mk_outdir(self, name):
 		'Make outdir and check if emty'
-		if self.outdir == None:
-			self.outdir = Path() / name
-		self.outdir.mkdir(parents=True, exist_ok=True)
-		if any(self.outdir.iterdir()):
-			raise RuntimeError('Destination directory needs to be emtpy')
-		if self.logger.logfh == None:
-			self.logger.logfile_open(outdir=self.outdir)
-		self.logger.put('Writing into directory ' + str(self.outdir.resolve()))
+		if self.Writer != None or self.logger.logfh == None or self.sqlitefile == None:
+			if self.outdir == None:
+				self.outdir = Path() / name
+			self.outdir.mkdir(parents=True, exist_ok=True)
+			if any(self.outdir.iterdir()):
+				raise RuntimeError('Destination directory needs to be emtpy')
+			if self.logger.logfh == None:
+				self.logger.logfile_open(outdir=self.outdir)
+			self.logger.put('Writing into directory ' + str(self.outdir.resolve()))
+
+	def mk_log(self, name):
+		'Make logfile'
+		if self.Writer != None or ( self.sqlitefile == None and self.outdir != None ):
+			if self.logger.logfh == None:
+				self.logger.logfile_open(outdir=self.outdir)
+		elif self.logger.logfh == None:
+			self.logger.logfile_open(filename=Path(name + '_log.txt'))
 
 	def mk_sqlite(self, name):
 		'Make empty sSQLite file'
@@ -577,6 +584,7 @@ class Worker:
 		with open(dumpfile, 'rb') as dumpfh:	# dumpfile or sqlite db file?
 			self.is_sqlite = ( dumpfh.read(16) == b'SQLite format 3\x00' )
 		self.mk_outdir(dumpfile.stem)
+		self.mk_log(dumpfile.stem)
 		if self.is_sqlite:
 			self.sqlite = SQLite(self.logger, dumpfile)
 			self.write()
@@ -591,12 +599,8 @@ class Worker:
 
 	def fromserver(self, host=None, user=None, password=None, database=None):
 		'Fetch from SQL server'
-		if self.Writer != None or ( self.sqlitefile == None and self.outdir != None ):
-			self.mk_outdir(database)
-			if self.logger.logfh == None:
-				self.logger.logfile_open(outdir=self.outdir)
-		elif self.logger.logfh == None:
-			self.logger.logfile_open(filename=Path(database + '_log.txt'))
+		self.mk_outdir(database)
+		self.mk_log(database)
 		self.mk_sqlite(database)
 		sqlclient = SQLClient(self.logger,
 			host = host,
