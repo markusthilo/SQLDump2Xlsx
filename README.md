@@ -1,4 +1,5 @@
 # SQLDump2Xlsx
+### *--- Deprecated project - transitioned into FallbackImager, module: Sqlite (sqlite.py) ---*
 
 Generate Excel files from a SQL table without relations
 
